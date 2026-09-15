@@ -68,8 +68,34 @@ vLLM service or GPU workload is started by either script.
 ```
 
 This runs the tests directly from `src/`. It does not install the package,
-build a wheel, register the vLLM plugin entry point, or start a GPU workload.
-Set `PYTHON_BIN` when the desired interpreter is not exposed as `python3`.
+build a wheel, register the vLLM plugin entry point, inspect host hardware, or
+start a GPU workload. Set `PYTHON_BIN` when the desired interpreter is not
+exposed as `python3`.
+
+## Live host topology probe
+
+Run the separate read-only probe on a target Linux host:
+
+```bash
+./scripts/probe-host.sh
+```
+
+It prints the online and allowed CPUs, NUMA-node CPU lists, candidate
+accelerator PCI metadata, the real PCIe parent path, NUMA evidence, and the
+suggested CPU intersection.
+
+By default, display-controller (PCI base class `0x03`) and processing-
+accelerator (`0x12`) functions are treated as candidates. This is convenient
+discovery, not a provider-neutral logical-GPU mapping. For a trusted runtime
+mapping, provide one or more comma-separated BDFs:
+
+```bash
+AFFINITY_BDFS=0000:41:00.0,0000:81:00.0 ./scripts/probe-host.sh
+```
+
+The probe returns nonzero if no candidate is found or any topology result is not
+`success`. It reads sysfs and the current process affinity but never changes
+affinity or starts a GPU workload.
 
 Run the independent topology analyzer directly from a checkout:
 

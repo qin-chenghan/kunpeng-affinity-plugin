@@ -16,6 +16,26 @@ The module imports neither vLLM nor SGLang. It does not invoke NVML,
 
 ## Usage
 
+For a live, human-readable environment probe from a source checkout:
+
+```bash
+./scripts/probe-host.sh
+```
+
+The probe enumerates PCI base-class `0x03` display controllers and `0x12`
+processing accelerators as candidates, then runs the analyzer for each BDF. The
+candidate scan is not a replacement for a runtime Provider. Override it when a
+trusted mapping is available:
+
+```bash
+AFFINITY_BDFS=0000:41:00.0,0000:81:00.0 ./scripts/probe-host.sh
+```
+
+For every device, the output includes PCI identity fields, every endpoint and
+bridge in the real sysfs parent path, the root bus, selected NUMA node and
+evidence source, node/online/allowed CPU sets, and the final suggested set. The
+probe exits nonzero when discovery is empty or any result is not `success`.
+
 From the repository checkout:
 
 ```bash
