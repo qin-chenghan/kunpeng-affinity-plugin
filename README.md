@@ -144,5 +144,6 @@ require vLLM, SGLang, CUDA, or a specific CPU architecture. The vLLM entry point
 is activated only when a compatible vLLM process loads general plugins.
 
 The current hook observes and delegates; it does not yet inject generic NUMA
-results or perform binding. See `docs/design.md` for the implementation status,
-compatibility boundaries, and remaining development steps.
+results or perform binding. The formal delivery baseline is
+`docs/kunpeng-affinity-plugin-delivery-design.md`; it defines the implementation
+status, compatibility boundaries, and remaining development steps.

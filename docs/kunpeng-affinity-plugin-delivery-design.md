@@ -1,8 +1,8 @@
-# 鲲鹏 GPU 亲和性插件详细设计与实施规范
+# 鲲鹏 GPU 亲和性插件正式交付设计与实施规范
 
 ## 文档说明
 
-本文是鲲鹏 CPU 平台 GPU 亲和性插件的完整详细设计和实施规范，用于指导编码、集成、测试、发布和后续维护。上位方案《鲲鹏 CPU 平台 vLLM / SGLang GPU 亲和性绑核软件方案设计》规定需求、原则和总体方向；本文在不改变上位方案目标的前提下，补齐可执行的软件架构、模块接口、算法约束、框架接入、开发步骤和验收出口。
+本文是鲲鹏 CPU 平台 GPU 亲和性插件的正式交付设计和实施基线，用于指导编码、集成、测试、发布和后续维护。上位方案《鲲鹏 CPU 平台 vLLM / SGLang GPU 亲和性绑核软件方案设计》规定需求、原则和总体方向；本文在不改变上位方案目标的前提下，补齐可执行的软件架构、模块接口、算法约束、框架接入、开发步骤、当前实现状态和验收出口。发生冲突时，需求和总体原则以上位方案为准，插件接口、实现步骤和交付验收以本文为准。
 
 本文采用以下状态术语，避免把设计目标和已完成实现混为一谈：
 
@@ -160,7 +160,9 @@ diagnostics 读取各层结果，但各核心层不反向依赖 diagnostics
 
 ### 4.1 交付物
 
-最终交付物是一个可安装 Python wheel，至少包含：
+当前开发和跨环境验证以可克隆的源码仓库为主要交付载体，通过 editable install 向框架注册插件 entry point；该方式直接运行 checkout 中的源码，不要求预先构建 wheel。正式发布时可额外生成 wheel，作为版本化或离线安装制品，但 wheel 不是当前 Demo 验证的前置条件。
+
+源码仓库及可选发布制品至少包含：
 
 - 通用核心与 Linux sysfs 拓扑实现；
 - Provider SPI 和目标 GPU Provider；
@@ -169,7 +171,7 @@ diagnostics 读取各层结果，但各核心层不反向依赖 diagnostics
 - 单元测试、sysfs fixtures 和框架契约测试；
 - 版本兼容矩阵、安装说明和测试报告模板。
 
-安装插件后继续使用原框架命令。对于 vLLM，用户仍需按框架语义启用 `--numa-bind`；安装插件本身不自动改变绑定开关。
+源码 editable install 或 wheel 安装后继续使用原框架命令。对于 vLLM，用户仍需按框架语义启用 `--numa-bind`；安装插件本身不自动改变绑定开关。纯拓扑测试和真实主机只读探测可以直接通过 `PYTHONPATH` 运行，不要求安装插件；只有验证框架自动发现 entry point 时才必须安装。
 
 ### 4.2 建议目录
 
@@ -874,7 +876,7 @@ CLI 默认输出人类可读摘要，支持 JSON schema。非全部成功时返�
 7. 自动模式不得扩大当前 CPU affinity，也不得清除已有 cpuset。
 8. 批量失败不产生部分提交。
 9. Hook 不兼容时保持框架未加载插件时的行为。
-10. 安装和卸载 wheel 后，框架源码及入口命令保持不变。
+10. 源码 editable install、禁用和卸载后，框架源码及入口命令保持不变；可选 wheel 必须满足同一要求。
 
 ## 18. 开发流程与组装步骤
 
@@ -1007,7 +1009,7 @@ CLI 默认输出人类可读摘要，支持 JSON schema。非全部成功时返�
 - 对照原始 sysfs、PCI 工具和设备资料；
 - 在明确的独占测试窗口运行框架负载。
 
-组装位置：完整 wheel + 目标 Provider + vLLM Adapter。
+组装位置：完整源码包（可选 wheel）+ 目标 Provider + vLLM Adapter。
 
 验收出口：设备身份、路径、NUMA、配置和目标进程 affinity 全链一致；未覆盖硬件明确列出。
 
@@ -1015,7 +1017,7 @@ CLI 默认输出人类可读摘要，支持 JSON schema。非全部成功时返�
 
 实现：
 
-- 构建 wheel、SBOM 和依赖清单；
+- 固化源码版本、SBOM 和依赖清单，并按发布需要构建可选 wheel；
 - 增加安装、卸载和禁用测试；
 - 固定 JSON schema、错误码和兼容矩阵；
 - 验证插件未加载时零行为变化；
@@ -1039,7 +1041,7 @@ CLI 默认输出人类可读摘要，支持 JSON schema。非全部成功时返�
 ### 18.1 最终组装关系
 
 ```text
-Python wheel
+Python 源码包（发布时可选 wheel）
   ├── vllm.general_plugins entry point
   │     └── VllmAffinityAdapter
   │           ├── EligibilityChecker
@@ -1101,7 +1103,7 @@ Python wheel
 
 集成测试优先使用最小进程，不直接启动模型：
 
-1. 安装 wheel 并验证 entry point；
+1. editable install 源码并验证 entry point；发布验收时再覆盖可选 wheel；
 2. 构造最小 `VllmConfig`；
 3. 启动 dummy spawn 子进程；
 4. 捕获插件决策和框架生成参数；
@@ -1138,7 +1140,7 @@ Python wheel
 
 ### 20.1 功能验收
 
-1. wheel 安装后仍使用原 vLLM 命令；
+1. 源码 editable install 后仍使用原 vLLM 命令；可选 wheel 行为一致；
 2. 未启用框架绑核时插件不查询、不绑定；
 3. 用户显式字段不被覆盖；
 4. 原生有效结果不触发 generic；
@@ -1175,15 +1177,17 @@ Python wheel
 
 ## 21. 当前实现状态
 
+### 21.1 已实现能力清单
+
 | 能力 | 当前状态 | 与正式设计的差距 |
 |---|---|---|
-| Python 包与 vLLM entry point | 已实现 Demo | 需完善配置、错误码、版本矩阵和发布工程。 |
+| Python 包与 vLLM entry point | 已实现 Demo | 元数据和 editable install 已验证；尚未在目标 vLLM 真实启动链确认所有相关进程均按时加载。 |
 | `configure_subprocess` 幂等 Hook | 已实现 Demo | 当前只记录并原样委托，尚未接入决策和通用结果。 |
-| BDF 规范化 | 已实现并测试 | 需迁移到正式 core 模块并补全错误码。 |
+| BDF 规范化 | 已实现并测试 | 需补全稳定错误码和发布级输入契约。 |
 | sysfs PCIe 父链 | 已实现并测试 | 需增加热插拔复核和可选 port type。 |
 | NUMA 证据与冲突检测 | 已实现并测试 | 需拆分 resolver 并补充 memory-only node 策略。 |
 | CPU 集合求交 | 已实现并测试 | 需接入 node/exact 策略和进程时机测试。 |
-| 只读 CLI | 已实现 Demo | 需固定 JSON schema 和脱敏策略。 |
+| 只读 CLI 与主机探测脚本 | 已实现 Demo | `probe-host.sh` 能打印真实 PCI/NUMA/CPU 证据；需固定 JSON schema 和脱敏策略。 |
 | 单级/多级 Switch | fixture 已验证 | 真实硬件待验证。 |
 | Provider SPI | 已实现 Demo | 已有 `DeviceContext`、`DeviceMapping`、`DeviceMapper`、Registry 和静态映射 Provider；目标 GPU Provider 仍待实现。 |
 | 目标 GPU Provider | 拟实现 | 需结合目标运行时或设备节点完成。 |
@@ -1193,7 +1197,29 @@ Python wheel
 | vLLM `v0.23.0` 完整集成 | 待验证 | 源码契约已确认，运行闭环未完成。 |
 | SGLang 适配 | 后续阶段 | 通用核心可复用，Adapter 尚未实施。 |
 
-当前可以确认的是：独立插件加载方式可行，BDF 之后的 Linux 拓扑核心已有可执行 Demo 和测试基础。不能据此宣称完整自动绑核插件、目标 GPU Provider 或真实 PCIe Switch 硬件验收已经完成。
+当前源码单元测试共 27 项，覆盖通用拓扑、Provider/批量解析、PCI class 候选发现和模拟 vLLM Hook。项目使用者已在另一 Linux 环境执行 `test.sh` 和 `probe-host.sh` 并报告全部成功，说明源码可迁移运行，且该环境中从候选 BDF 到 PCIe/NUMA/目标 CPU 集合的只读分析闭环可执行。由于该次原始输出未归档，此结论不替代设备身份、具体 Switch 层级和框架实际 affinity 的正式验收证据；`test.sh` 也不加载环境中真实安装的 vLLM。
+
+### 21.2 vLLM 自动绑核运行闭环
+
+下表只描述插件从 vLLM 启动到完成自动绑核的运行链路，不等同于第 18 章按工程依赖划分的开发步骤。
+
+| 步骤 | 运行链路 | 状态 | 当前证据与缺口 |
+|---|---|---|---|
+| 1 | vLLM 自动发现并加载插件 | 部分完成 | 已定义 `vllm.general_plugins`，并验证 entry point 元数据和 editable install；尚未在目标 vLLM 真实启动链确认各相关进程的加载时机。 |
+| 2 | 拦截 Worker 子进程初始化入口 | 已实现 Demo | 已对 `vllm.utils.numa_utils.configure_subprocess` 安装签名受控、幂等且保持 context manager 语义的包装器，并原样委托。 |
+| 3 | 提取 rank、逻辑设备和进程上下文 | 部分完成 | 已观察 `vllm_config`、`local_rank`、`dp_local_rank`、`process_kind`、PID、版本和 `numa_bind`；尚未构造完整 `DeviceContext`，也未证明 TP/DP/可见设备映射。 |
+| 4 | 识别并保护用户显式配置 | 部分完成 | 当前委托保证不改写任何用户配置，并能读取 `numa_bind`；尚未字段级识别 `numa_bind_nodes`、`numa_bind_cpus`，也未实现显式配置优先的插件决策分支。 |
+| 5 | 逻辑 GPU 映射为可信 PCI BDF | 未完成 | Provider SPI、Registry 和静态映射已实现；目标 Runtime Provider 尚未实现。PCI class 候选发现仅用于诊断，不构成逻辑 GPU 映射。 |
+| 6 | 根据 BDF 检测 PCIe/NUMA 拓扑 | 已实现 | 已支持 BDF 规范化、真实 sysfs 父链、Endpoint/祖先 NUMA 证据、直连及任意层级 Switch；fixture 已覆盖，另有真实 Linux 主机成功报告。 |
+| 7 | 计算当前进程可用目标 CPU 集合 | 已实现 | 已实现 `node CPUs ∩ online CPUs ∩ sched_getaffinity(0)`，并处理证据冲突、未知 NUMA 和空交集。 |
+| 8 | 按优先级选择显式、原生或通用结果 | 未完成 | Hook 尚未实现 `explicit -> native -> generic -> skip/fail` 决策，也未向 vLLM 配置提交通用结果。 |
+| 9 | 对正确 vLLM 进程执行并验证绑核 | 未完成 | 尚未验证 Worker/EngineCore 的实际绑定时机、多进程设备对应、失败回退和绑定前后 affinity。 |
+
+按上述严格口径，当前为 3 项已实现、3 项部分完成、3 项未完成。不使用线性百分比表示可用性，因为步骤 5、8、9 均位于自动绑核关键路径；在三项完成前，交付物仍是“通用基础能力和 Hook Demo”，不是可用的自动绑核插件。
+
+### 21.3 当前阶段结论
+
+当前可以确认的是：插件入口和 Hook 形态可行，BDF 之后的 Linux 拓扑核心及 CPU 集合计算已形成可执行、可迁移的 Demo。下一开发入口是步骤 5 的目标 Runtime Provider；其输出接入批量解析后，才能实施步骤 8 的 vLLM 决策与配置注入。不能据此宣称完整自动绑核插件、目标 GPU Provider、真实 PCIe Switch 硬件验收或 vLLM 实际绑核已经完成。
 
 ## 22. 待决策事项
 
