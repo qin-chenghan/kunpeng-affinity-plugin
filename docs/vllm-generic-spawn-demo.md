@@ -56,7 +56,9 @@ A successful JSON result contains:
 - `native_numa_query_called: false`;
 - the generated `generic_nodes` list;
 - the expected NUMA CPU list;
-- the dummy child's actual `Cpus_allowed_list` and `Mems_allowed_list`.
+- the dummy child's actual `Cpus_allowed_list` and `Mems_allowed_list`;
+- selected fields from the child's `numactl --show` output and a separate
+  `memory_policy_verified` result.
 
 The script replaces `get_auto_numa_nodes()` with a function that raises if it
 is called. Therefore success is direct evidence that the native GPU NUMA query
@@ -67,6 +69,13 @@ with Python multiprocessing `spawn` while the real vLLM
 `configure_subprocess()` context is active, so its CPU affinity tests the
 original vLLM numactl execution path rather than a plugin-owned binding
 implementation.
+
+`Mems_allowed_list` reports the process or cgroup's permitted memory nodes; it
+does not prove the active NUMA memory policy. The diagnostic therefore checks
+the child's `numactl --show` policy and `membind` fields separately. vLLM may
+intentionally fall back to CPU-only binding when the environment rejects
+`--membind`; in that case CPU verification can succeed while
+`memory_policy_verified` is false.
 
 ## Interpretation
 

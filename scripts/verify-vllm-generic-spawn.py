@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -21,12 +22,28 @@ def _status_value(name: str) -> str:
     raise RuntimeError(f"{name} is missing from /proc/self/status")
 
 
+def _numactl_policy() -> dict[str, str]:
+    result = subprocess.run(
+        ["numactl", "--show"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    fields = {}
+    for line in result.stdout.splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key in {"policy", "cpubind", "nodebind", "membind"}:
+            fields[key] = value.strip()
+    return fields
+
+
 def _child(send_connection) -> None:
     send_connection.send(
         {
             "pid": os.getpid(),
             "cpus_allowed_list": _status_value("Cpus_allowed_list"),
             "mems_allowed_list": _status_value("Mems_allowed_list"),
+            "numactl": _numactl_policy(),
         }
     )
     send_connection.close()
@@ -98,6 +115,13 @@ def main() -> int:
             f"actual={result['cpus_allowed_list']}"
         )
 
+    expected_nodes = {str(node) for node in nodes}
+    actual_memory_nodes = set(result["numactl"].get("membind", "").split())
+    memory_policy_verified = (
+        result["numactl"].get("policy") == "bind"
+        and actual_memory_nodes == expected_nodes
+    )
+
     print(
         json.dumps(
             {
@@ -105,6 +129,7 @@ def main() -> int:
                 "native_numa_query_called": False,
                 "generic_nodes": nodes,
                 "expected_cpus": format_cpulist(expected_cpus),
+                "memory_policy_verified": memory_policy_verified,
                 "child": result,
             },
             indent=2,
