@@ -1181,25 +1181,25 @@ Python 源码包（发布时可选 wheel）
 
 | 能力 | 当前状态 | 与正式设计的差距 |
 |---|---|---|
-| Python 包与 vLLM entry point | 已实现 Demo | 元数据和 editable install 已验证；尚未在目标 vLLM 真实启动链确认所有相关进程均按时加载。 |
-| `configure_subprocess` 幂等 Hook | 已实现 Demo | 当前只记录并原样委托，尚未接入决策和通用结果。 |
+| Python 包与 vLLM entry point | 已实现 Demo | 元数据、editable install 及 vLLM 0.26 真实 `load_general_plugins()` 已验证；目标 0.23 完整启动链和所有相关进程的加载时机仍待验证。 |
+| `configure_subprocess` 幂等 Hook | 已实现 Demo | 默认仍只记录并原样委托；诊断开关下可提交通用节点并调用原执行器，正式 native -> generic 状态机尚未实现。 |
 | BDF 规范化 | 已实现并测试 | 需补全稳定错误码和发布级输入契约。 |
 | sysfs PCIe 父链 | 已实现并测试 | 需增加热插拔复核和可选 port type。 |
 | NUMA 证据与冲突检测 | 已实现并测试 | 需拆分 resolver 并补充 memory-only node 策略。 |
-| CPU 集合求交 | 已实现并测试 | 需接入 node/exact 策略和进程时机测试。 |
+| CPU 集合求交 | 已实现并测试 | node 结果已接入 vLLM 0.26 dummy Worker 诊断；exact 策略及多进程时机仍待验证。 |
 | 只读 CLI 与主机探测脚本 | 已实现 Demo | `probe-host.sh` 能打印真实 PCI/NUMA/CPU 证据；需固定 JSON schema 和脱敏策略。 |
 | 单级/多级 Switch | fixture 已验证 | 真实硬件待验证。 |
 | Provider SPI | 已实现 Demo | 已有 `DeviceContext`、`DeviceMapping`、`DeviceMapper`、Registry、静态映射 Provider、`LinuxContextProvider` 和 vLLM 平台 Provider；目标 GPU Runtime Provider 仍待实现。 |
 | Linux context BDF Provider | 已实现并测试 | 只接受上下文明确提供的 BDF 或真实 sysfs 设备路径，不代表任意 GPU 运行时映射已经完成。 |
-| vLLM 平台 BDF Provider | 已实现并测试 | 使用 vLLM 0.23 `get_all_gpu_pci_bus_ids()` 与 `device_id_to_physical_device_id()`，已用假平台验证可见设备重排；真实 vLLM 进程接入尚未完成。 |
+| vLLM 平台 BDF Provider | 已实现并测试 | 使用 `get_all_gpu_pci_bus_ids()` 与 `device_id_to_physical_device_id()`；假平台覆盖可见设备重排，vLLM 0.26 单 GPU 真实平台已完成 BDF 到 sysfs 接入验证，目标 0.23 和非原生目标平台仍待验证。 |
 | 目标 GPU Provider | 拟实现 | 需结合尚未确定的目标运行时或设备节点契约，将框架 logical device/rank 映射到唯一 BDF。 |
 | 批量事务 | 已实现 Demo | 已实现按输入顺序解析、BDF 再校验、fingerprint 一致性和 all-or-nothing 可提交判定。 |
-| native -> generic 回退 | 拟实现 | 尚未接入 vLLM Hook。 |
-| `numactl` 和实际 affinity | 待验证 | 尚未完成目标版本执行链测试。 |
+| native -> generic 回退 | 部分实现 | 默认关闭的强制通用诊断分支已接入 Hook，可证明绕过 native 查询；生产态 native 先行、generic 回退及自动/严格失败策略尚未实现。 |
+| `numactl` 和实际 affinity | 部分验证 | vLLM 0.26 dummy Worker 已通过原 `numactl` wrapper 验证 CPU 和 memory policy；EngineCore、真实 Worker 生命周期及目标 0.23 仍待验证。 |
 | vLLM `v0.23.0` 完整集成 | 待验证 | 源码契约已确认，运行闭环未完成。 |
 | SGLang 适配 | 后续阶段 | 通用核心可复用，Adapter 尚未实施。 |
 
-当前源码单元测试共 38 项，覆盖通用拓扑、Provider/批量解析、上下文 BDF、vLLM 平台 BDF 映射、PCI class 候选发现和模拟 vLLM Hook。项目使用者已在另一 Linux 环境执行 `test.sh` 和 `probe-host.sh` 并报告全部成功，说明源码可迁移运行，且该环境中从候选 BDF 到 PCIe/NUMA/目标 CPU 集合的只读分析闭环可执行。由于该次原始输出未归档，此结论不替代设备身份、具体 Switch 层级和框架实际 affinity 的正式验收证据；`test.sh` 也不加载环境中真实安装的 vLLM。
+当前源码单元测试共 44 项，覆盖通用拓扑、Provider/批量解析、上下文 BDF、vLLM 平台 BDF 映射、PCI class 候选发现、模拟 vLLM Hook 及强制通用分支的门控和失败原子性。另已在 vLLM 0.26 单 GPU 隔离环境验证：真实插件 entry point 被加载，native GPU NUMA 查询未调用，逻辑设备经平台 API 映射到 BDF，Linux sysfs 得出节点，原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。该结果是 0.26 单 GPU Worker 级诊断证据，不替代目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。
 
 ### 21.2 vLLM 自动绑核运行闭环
 
@@ -1207,21 +1207,21 @@ Python 源码包（发布时可选 wheel）
 
 | 步骤 | 运行链路 | 状态 | 当前证据与缺口 |
 |---|---|---|---|
-| 1 | vLLM 自动发现并加载插件 | 部分完成 | 已定义 `vllm.general_plugins`，并验证 entry point 元数据和 editable install；尚未在目标 vLLM 真实启动链确认各相关进程的加载时机。 |
-| 2 | 拦截 Worker 子进程初始化入口 | 已实现 Demo | 已对 `vllm.utils.numa_utils.configure_subprocess` 安装签名受控、幂等且保持 context manager 语义的包装器，并原样委托。 |
-| 3 | 提取 rank、逻辑设备和进程上下文 | 部分完成 | 已观察 `vllm_config`、`local_rank`、`dp_local_rank`、`process_kind`、PID、版本和 `numa_bind`；尚未构造完整 `DeviceContext`，也未证明 TP/DP/可见设备映射。 |
-| 4 | 识别并保护用户显式配置 | 部分完成 | 当前委托保证不改写任何用户配置，并能读取 `numa_bind`；尚未字段级识别 `numa_bind_nodes`、`numa_bind_cpus`，也未实现显式配置优先的插件决策分支。 |
-| 5 | 逻辑 GPU 映射为可信 PCI BDF | 部分完成 | 已实现 `LinuxContextProvider`，可消费上下文中的显式 BDF、BDF-valued runtime ID 或真实 sysfs 设备路径；目标 Runtime Provider 尚未把框架 logical device/rank 解析为 BDF。PCI class 候选发现仅用于诊断，不构成逻辑 GPU 映射。 |
+| 1 | vLLM 自动发现并加载插件 | 部分完成 | 已验证 entry point 元数据、editable install 和 vLLM 0.26 真实加载；目标 0.23 完整启动链及各相关进程加载时机仍待验证。 |
+| 2 | 拦截 Worker 子进程初始化入口 | 已实现 Demo | 已安装签名受控、幂等且保持 context manager 语义的包装器；默认原样委托，诊断模式提交节点后仍调用原函数。 |
+| 3 | 提取 rank、逻辑设备和进程上下文 | 部分完成 | 已观察框架配置、rank、进程类型和版本，并能按平台可见设备数构造有序 `DeviceContext`；TP/DP、多 GPU 和 visibility fingerprint 尚未完成运行验证。 |
+| 4 | 识别并保护用户显式配置 | 部分完成 | 诊断分支仅在 `numa_bind=True` 且节点缺失时运行，显式节点和关闭状态均已测试保护；正式字段级 native/generic 决策及全部显式 CPU 组合仍待完成。 |
+| 5 | 逻辑 GPU 映射为可信 PCI BDF | 部分完成 | vLLM 平台 Provider 已在 0.26 单 GPU 真实进程完成 logical device -> physical ID -> BDF 验证；非原生目标平台仍需要其 Runtime Provider 契约，多 GPU 可见顺序仍待真实验证。 |
 | 6 | 根据 BDF 检测 PCIe/NUMA 拓扑 | 已实现 | 已支持 BDF 规范化、真实 sysfs 父链、Endpoint/祖先 NUMA 证据、直连及任意层级 Switch；fixture 已覆盖，另有真实 Linux 主机成功报告。 |
 | 7 | 计算当前进程可用目标 CPU 集合 | 已实现 | 已实现 `node CPUs ∩ online CPUs ∩ sched_getaffinity(0)`，并处理证据冲突、未知 NUMA 和空交集。 |
-| 8 | 按优先级选择显式、原生或通用结果 | 未完成 | Hook 尚未实现 `explicit -> native -> generic -> skip/fail` 决策，也未向 vLLM 配置提交通用结果。 |
-| 9 | 对正确 vLLM 进程执行并验证绑核 | 未完成 | 尚未验证 Worker/EngineCore 的实际绑定时机、多进程设备对应、失败回退和绑定前后 affinity。 |
+| 8 | 按优先级选择显式、原生或通用结果 | 部分完成 | 强制通用诊断模式已实现显式节点保护、通用批量解析和节点提交；正式 `explicit -> native -> generic -> skip/fail` 状态机仍待实现。 |
+| 9 | 对正确 vLLM 进程执行并验证绑核 | 部分完成 | vLLM 0.26 dummy Worker 已验证原 wrapper 的 CPU affinity 和 memory policy；EngineCore、真实 Worker、目标 0.23、多进程映射和失败回退仍待验证。 |
 
-按上述严格口径，当前为 3 项已实现、4 项部分完成、2 项未完成；步骤 5 的部分完成包含 Provider SPI、上下文 BDF 校验和 vLLM 平台 API 适配，但不包含目标硬件 Runtime Provider。不使用线性百分比表示可用性，因为步骤 5、8、9 均位于自动绑核关键路径；在三项完成前，交付物仍是“通用基础能力和 Hook Demo”，不是可用的自动绑核插件。
+按上述严格口径，当前为 3 项已实现、6 项部分完成。关键步骤 5、8、9 虽已取得单 GPU dummy Worker 证据，但生产回退策略、目标硬件 Provider 和完整框架生命周期仍未完成，因此交付物仍属于“通用基础能力和受控集成 Demo”，不能称为生产可用的自动绑核插件。
 
 ### 21.3 当前阶段结论
 
-当前可以确认的是：插件入口和 Hook 形态可行，BDF 之后的 Linux 拓扑核心及 CPU 集合计算已形成可执行、可迁移的 Demo。下一开发入口是步骤 5 的目标 Runtime Provider；其输出接入批量解析后，才能实施步骤 8 的 vLLM 决策与配置注入。不能据此宣称完整自动绑核插件、目标 GPU Provider、真实 PCIe Switch 硬件验收或 vLLM 实际绑核已经完成。
+当前可以确认的是：插件能够在 vLLM 0.26 中从 logical device 经 BDF 和 Linux sysfs 得到节点，并通过框架原执行器真实绑定 dummy Worker；强制模式还证明了该结果不来自 native GPU NUMA 查询。下一开发入口是把受控强制分支演进为正式的 `explicit -> native -> generic -> skip/fail` 状态机，并补齐 EngineCore 和完整服务生命周期验证。目标非原生 GPU 仍需明确 Runtime Provider 契约；当前结果不能外推为目标 0.23、多 GPU、真实 PCIe Switch 或生产服务验收。
 
 ## 22. 待决策事项
 

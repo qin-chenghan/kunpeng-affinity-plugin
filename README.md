@@ -36,9 +36,9 @@ The diagnostic mode still requires vLLM's `numa_bind=True`, preserves explicit
 query. The switch is disabled by default and is not yet the production
 `native -> generic` fallback policy.
 
-The target contract is vLLM 0.23.0. The hook shape is also covered by unit tests
-for vLLM 0.26.0, but that version has not completed the full compatibility and
-binding validation matrix.
+The target contract is vLLM 0.23.0. vLLM 0.26.0 has additionally passed the
+single-device dummy spawn diagnostic, but neither version has completed the
+full compatibility and binding validation matrix.
 
 ## Source deployment
 
