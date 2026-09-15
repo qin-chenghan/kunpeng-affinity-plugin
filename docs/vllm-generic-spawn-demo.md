@@ -70,6 +70,10 @@ with Python multiprocessing `spawn` while the real vLLM
 original vLLM numactl execution path rather than a plugin-owned binding
 implementation.
 
+After the child exits, the diagnostic closes its multiprocessing process and
+stops the spawn resource tracker explicitly. This prevents orphaned tracker
+zombies in minimal test containers whose PID 1 does not reap children.
+
 `Mems_allowed_list` reports the process or cgroup's permitted memory nodes; it
 does not prove the active NUMA memory policy. The diagnostic therefore checks
 the child's `numactl --show` policy and `membind` fields separately. vLLM may

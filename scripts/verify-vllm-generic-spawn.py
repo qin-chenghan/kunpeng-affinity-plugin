@@ -37,6 +37,15 @@ def _numactl_policy() -> dict[str, str]:
     return fields
 
 
+def _stop_spawn_resource_tracker() -> None:
+    """Reap the diagnostic's tracker when the container has no init process."""
+    from multiprocessing import resource_tracker
+
+    stop = getattr(resource_tracker._resource_tracker, "_stop", None)
+    if callable(stop):
+        stop()
+
+
 def _child(send_connection) -> None:
     send_connection.send(
         {
@@ -92,11 +101,20 @@ def main() -> int:
     if process.is_alive():
         process.terminate()
         process.join(timeout=5)
+        process.close()
+        receive_connection.close()
+        _stop_spawn_resource_tracker()
         raise RuntimeError("dummy child did not exit within 30 seconds")
     if process.exitcode != 0:
-        raise RuntimeError(f"dummy child exited with status {process.exitcode}")
+        exitcode = process.exitcode
+        process.close()
+        receive_connection.close()
+        _stop_spawn_resource_tracker()
+        raise RuntimeError(f"dummy child exited with status {exitcode}")
     result = receive_connection.recv()
     receive_connection.close()
+    process.close()
+    _stop_spawn_resource_tracker()
 
     nodes = config.parallel_config.numa_bind_nodes
     if not nodes:
