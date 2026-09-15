@@ -28,6 +28,39 @@ The target contract is vLLM 0.23.0. The hook shape is also covered by unit tests
 for vLLM 0.26.0, but that version has not completed the full compatibility and
 binding validation matrix.
 
+## Source deployment
+
+Clone the repository on the target machine, enter the Python environment used
+by vLLM, and register this checkout as an editable package:
+
+```bash
+git clone git@github.com:qin-chenghan/kunpeng-affinity-plugin.git
+cd kunpeng-affinity-plugin
+./scripts/install-source.sh
+./scripts/verify-source.sh
+```
+
+If the vLLM environment does not expose its interpreter as `python3`, select it
+explicitly for both commands:
+
+```bash
+PYTHON_BIN=/path/to/vllm/python ./scripts/install-source.sh
+PYTHON_BIN=/path/to/vllm/python ./scripts/verify-source.sh
+```
+
+`install-source.sh` requires Python 3.10+ and setuptools 64+, then runs the
+selected interpreter with `-m pip install --no-deps --no-build-isolation -e .`.
+It does not download dependencies. Editable
+installation does not copy or build the project into a separate artifact:
+Python imports the checked-out source tree directly, while package metadata
+registers the `vllm.general_plugins` entry point needed for automatic vLLM
+plugin discovery. Source edits therefore take effect when a new Python/vLLM
+process starts.
+
+Use the same Python interpreter/environment that starts vLLM. Installing into a
+different virtual environment will not make the plugin visible to vLLM. No
+vLLM service or GPU workload is started by either script.
+
 ## Local tests
 
 ```bash
@@ -65,9 +98,11 @@ See `docs/provider-batch-demo.md` for the mapping contract and failure
 semantics. The static provider is a configuration/test implementation; a
 target GPU runtime provider must be added before framework integration.
 
-## Package and transfer
+## Optional package artifact
 
-Build a portable pure-Python wheel:
+A wheel is an installable Python package, not an executable file. It is useful
+for versioned or offline distribution but is not required for source-based Demo
+development. If needed, build one with:
 
 ```bash
 python3 -m pip wheel --no-deps --wheel-dir dist .
