@@ -64,8 +64,12 @@ vLLM service or GPU workload is started by either script.
 ## Local tests
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+./scripts/test.sh
 ```
+
+This runs the tests directly from `src/`. It does not install the package,
+build a wheel, register the vLLM plugin entry point, or start a GPU workload.
+Set `PYTHON_BIN` when the desired interpreter is not exposed as `python3`.
 
 Run the independent topology analyzer directly from a checkout:
 
