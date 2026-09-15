@@ -50,6 +50,7 @@ def _config():
 
 def main() -> int:
     os.environ["KUNPENG_AFFINITY_VLLM_FORCE_GENERIC"] = "1"
+    os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
     from vllm.plugins import load_general_plugins
     from vllm.utils import numa_utils

@@ -60,10 +60,13 @@ A successful JSON result contains:
 
 The script replaces `get_auto_numa_nodes()` with a function that raises if it
 is called. Therefore success is direct evidence that the native GPU NUMA query
-was bypassed. The child is started with Python multiprocessing `spawn` while
-the real vLLM `configure_subprocess()` context is active, so its CPU affinity
-tests the original vLLM numactl execution path rather than a plugin-owned
-binding implementation.
+was bypassed. Before importing vLLM, it also sets
+`VLLM_WORKER_MULTIPROC_METHOD=spawn`, which vLLM requires before it will replace
+the multiprocessing executable with its numactl wrapper. The child is started
+with Python multiprocessing `spawn` while the real vLLM
+`configure_subprocess()` context is active, so its CPU affinity tests the
+original vLLM numactl execution path rather than a plugin-owned binding
+implementation.
 
 ## Interpretation
 
