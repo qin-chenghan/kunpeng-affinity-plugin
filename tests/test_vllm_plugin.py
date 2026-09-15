@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import types
 import unittest
@@ -77,6 +78,99 @@ class VllmPluginTest(unittest.TestCase):
         self.numa_utils.configure_subprocess = incompatible
         with self.assertRaisesRegex(RuntimeError, "missing parameters"):
             vllm_plugin.register()
+
+    def test_forced_generic_path_commits_nodes_before_delegating(self) -> None:
+        config = types.SimpleNamespace(
+            parallel_config=types.SimpleNamespace(
+                numa_bind=True,
+                numa_bind_nodes=None,
+            )
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {"KUNPENG_AFFINITY_VLLM_FORCE_GENERIC": "1"},
+            ),
+            patch.object(vllm_plugin, "_generic_numa_nodes", return_value=[3]),
+            patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
+        ):
+            vllm_plugin.register()
+            with self.numa_utils.configure_subprocess(config, 0):
+                pass
+
+        self.assertEqual(config.parallel_config.numa_bind_nodes, [3])
+        self.assertEqual(self.calls, [(config, 0, None, "worker")])
+
+    def test_forced_generic_path_preserves_explicit_nodes(self) -> None:
+        config = types.SimpleNamespace(
+            parallel_config=types.SimpleNamespace(
+                numa_bind=True,
+                numa_bind_nodes=[2],
+            )
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {"KUNPENG_AFFINITY_VLLM_FORCE_GENERIC": "true"},
+            ),
+            patch.object(vllm_plugin, "_generic_numa_nodes") as resolver,
+            patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
+        ):
+            vllm_plugin.register()
+            with self.numa_utils.configure_subprocess(config, 0):
+                pass
+
+        resolver.assert_not_called()
+        self.assertEqual(config.parallel_config.numa_bind_nodes, [2])
+
+    def test_forced_generic_path_respects_disabled_numa_bind(self) -> None:
+        config = types.SimpleNamespace(
+            parallel_config=types.SimpleNamespace(
+                numa_bind=False,
+                numa_bind_nodes=None,
+            )
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {"KUNPENG_AFFINITY_VLLM_FORCE_GENERIC": "yes"},
+            ),
+            patch.object(vllm_plugin, "_generic_numa_nodes") as resolver,
+            patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
+        ):
+            vllm_plugin.register()
+            with self.numa_utils.configure_subprocess(config, 0):
+                pass
+
+        resolver.assert_not_called()
+        self.assertIsNone(config.parallel_config.numa_bind_nodes)
+
+    def test_forced_generic_failure_does_not_delegate_or_mutate(self) -> None:
+        config = types.SimpleNamespace(
+            parallel_config=types.SimpleNamespace(
+                numa_bind=True,
+                numa_bind_nodes=None,
+            )
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {"KUNPENG_AFFINITY_VLLM_FORCE_GENERIC": "on"},
+            ),
+            patch.object(
+                vllm_plugin,
+                "_generic_numa_nodes",
+                side_effect=RuntimeError("generic failed"),
+            ),
+            patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
+        ):
+            vllm_plugin.register()
+            with self.assertRaisesRegex(RuntimeError, "generic failed"):
+                with self.numa_utils.configure_subprocess(config, 0):
+                    pass
+
+        self.assertIsNone(config.parallel_config.numa_bind_nodes)
+        self.assertEqual(self.calls, [])
 
 
 if __name__ == "__main__":

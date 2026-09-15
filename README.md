@@ -2,9 +2,8 @@
 
 This repository contains the incremental demos for the Kunpeng GPU affinity
 plugin. The current implementation includes the vLLM hook demo, the
-framework-independent Linux topology demo, and the provider/batch resolution
-demo. The vLLM hook still only observes and delegates; it does not yet inject
-generic affinity results.
+framework-independent Linux topology demo, the provider/batch resolution
+demo, and an opt-in vLLM forced-generic spawn diagnostic.
 
 It also contains Demo 2, a framework-independent, read-only Linux topology
 analyzer. Given a trusted PCI BDF, it follows the real sysfs parent path,
@@ -20,9 +19,22 @@ the batch non-committable; no binding operation is executed.
 ## Demo 1 behavior
 
 The `vllm.general_plugins` entry point installs an idempotent wrapper around
-`vllm.utils.numa_utils.configure_subprocess`. The wrapper logs the process ID,
-process kind, ranks, vLLM version, and `numa_bind` state, then delegates to the
-original function without changing configuration or binding behavior.
+`vllm.utils.numa_utils.configure_subprocess`. By default, the wrapper only logs
+the process context and delegates without changing vLLM behavior.
+
+For isolated integration testing, setting
+`KUNPENG_AFFINITY_VLLM_FORCE_GENERIC=1` forces a missing
+`numa_bind_nodes` list to be resolved as follows:
+
+```text
+vLLM logical device -> vLLM platform PCI BDF -> Linux sysfs -> NUMA node
+```
+
+The diagnostic mode still requires vLLM's `numa_bind=True`, preserves explicit
+`numa_bind_nodes`, and reuses vLLM's original `configure_subprocess` and
+`numactl` execution. It deliberately bypasses only vLLM's native GPU NUMA
+query. The switch is disabled by default and is not yet the production
+`native -> generic` fallback policy.
 
 The target contract is vLLM 0.23.0. The hook shape is also covered by unit tests
 for vLLM 0.26.0, but that version has not completed the full compatibility and
@@ -130,6 +142,28 @@ semantics. `StaticMappingProvider` is a configuration/test implementation.
 framework context or a device path; a target GPU runtime provider is still
 needed when the framework does not expose either fact.
 
+## vLLM forced-generic spawn diagnostic
+
+After editable source installation in an isolated vLLM environment with
+`numactl`, run:
+
+```bash
+./scripts/verify-vllm-generic-spawn.sh
+```
+
+Select the vLLM interpreter explicitly when needed:
+
+```bash
+PYTHON_BIN=/path/to/vllm/python ./scripts/verify-vllm-generic-spawn.sh
+```
+
+The script loads the real vLLM plugin entry point, makes the native GPU NUMA
+query fail if called, resolves BDF and topology through the generic path,
+launches a dummy multiprocessing child through vLLM's real numactl wrapper,
+and compares the child's `Cpus_allowed_list` with the expected NUMA CPUs. It
+does not start the vLLM engine, load a model, or run GPU computation. See
+`docs/vllm-generic-spawn-demo.md` for the exact boundary.
+
 ## Optional package artifact
 
 A wheel is an installable Python package, not an executable file. It is useful
@@ -145,7 +179,8 @@ with Python 3.10 or newer. The topology CLI and provider/batch core do not
 require vLLM, SGLang, CUDA, or a specific CPU architecture. The vLLM entry point
 is activated only when a compatible vLLM process loads general plugins.
 
-The current hook observes and delegates; it does not yet inject generic NUMA
-results or perform binding. The formal delivery baseline is
+The current Hook can inject generic NUMA nodes only under the explicit
+diagnostic switch. Automatic `native -> generic` fallback and the full vLLM
+service lifecycle are not yet implemented. The formal delivery baseline is
 `docs/kunpeng-affinity-plugin-delivery-design.md`; it defines the implementation
 status, compatibility boundaries, and remaining development steps.

@@ -1,0 +1,78 @@
+# vLLM Forced-Generic Spawn Diagnostic
+
+## Purpose
+
+This diagnostic validates the narrow integration path needed before a real
+vLLM service test:
+
+```text
+vLLM plugin discovery
+-> configure_subprocess Hook
+-> vLLM logical device identity
+-> vLLM platform PCI BDF
+-> generic Linux PCIe/NUMA analysis
+-> numa_bind_nodes injection
+-> original vLLM numactl wrapper
+-> dummy child CPU affinity
+```
+
+It does not start an engine, load a model, run GPU computation, implement the
+production native-to-generic fallback, or validate an unsupported accelerator
+Provider.
+
+## Safety Gates
+
+The forced path is selected only when all of the following are true:
+
+- `KUNPENG_AFFINITY_VLLM_FORCE_GENERIC` is a true value;
+- vLLM's `parallel_config.numa_bind` is enabled;
+- the user did not provide `numa_bind_nodes`;
+- vLLM's automatic-binding eligibility check succeeds;
+- the platform exposes a valid device count and logical-to-physical identity;
+- every visible device maps to a unique PCI BDF;
+- every BDF produces a bindable Linux topology result.
+
+Explicit nodes and a disabled vLLM NUMA binding switch are always preserved.
+Discovery failure raises before the original binding executor is entered. The
+diagnostic never guesses a BDF or commits a partial device list.
+
+## Running
+
+First install the checkout into the Python environment that contains vLLM:
+
+```bash
+PYTHON_BIN=/path/to/vllm/python ./scripts/install-source.sh
+PYTHON_BIN=/path/to/vllm/python ./scripts/verify-source.sh
+```
+
+Then run the isolated spawn diagnostic:
+
+```bash
+PYTHON_BIN=/path/to/vllm/python ./scripts/verify-vllm-generic-spawn.sh
+```
+
+A successful JSON result contains:
+
+- `native_numa_query_called: false`;
+- the generated `generic_nodes` list;
+- the expected NUMA CPU list;
+- the dummy child's actual `Cpus_allowed_list` and `Mems_allowed_list`.
+
+The script replaces `get_auto_numa_nodes()` with a function that raises if it
+is called. Therefore success is direct evidence that the native GPU NUMA query
+was bypassed. The child is started with Python multiprocessing `spawn` while
+the real vLLM `configure_subprocess()` context is active, so its CPU affinity
+tests the original vLLM numactl execution path rather than a plugin-owned
+binding implementation.
+
+## Interpretation
+
+Success proves the tested framework package can discover the plugin, map its
+visible device through the platform PCI identity API, resolve that BDF through
+Linux sysfs, inject the node list, and bind a dummy child through vLLM's
+existing wrapper.
+
+It does not prove support for other framework versions, multi-device rank
+layouts, Ray or external launchers, EngineCore-to-Worker CPU supersets, real
+service startup, or target hardware whose platform does not expose the vLLM
+PCI identity methods.

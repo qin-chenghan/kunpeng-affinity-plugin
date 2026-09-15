@@ -1,4 +1,4 @@
-"""vLLM general-plugin entry point for the subprocess hook demo."""
+"""vLLM general-plugin entry point and diagnostic generic-affinity hook."""
 
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ _REQUIRED_PARAMETERS = {
 }
 _TARGET_VERSION = "0.23.0"
 _AUXILIARY_DEMO_VERSION = "0.26.0"
+_FORCE_GENERIC_ENV = "KUNPENG_AFFINITY_VLLM_FORCE_GENERIC"
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 def _vllm_version() -> str:
@@ -42,6 +44,35 @@ def _argument(
 def _numa_bind_enabled(vllm_config: Any) -> Any:
     parallel_config = getattr(vllm_config, "parallel_config", None)
     return getattr(parallel_config, "numa_bind", "unknown")
+
+
+def _force_generic_enabled() -> bool:
+    return os.environ.get(_FORCE_GENERIC_ENV, "").strip().lower() in _TRUE_VALUES
+
+
+def _generic_numa_nodes(numa_utils: Any) -> list[int]:
+    """Resolve nodes without calling vLLM's native GPU NUMA query."""
+    eligibility = getattr(numa_utils, "_is_auto_numa_available", None)
+    if not callable(eligibility) or not eligibility():
+        raise RuntimeError(
+            "forced generic NUMA diagnostic failed vLLM's automatic-binding "
+            "eligibility checks"
+        )
+
+    from vllm.platforms import current_platform
+
+    from kunpeng_affinity.adapters import resolve_vllm_generic_affinity
+
+    batch = resolve_vllm_generic_affinity(current_platform)
+    nodes: list[int] = []
+    for resolution in batch.ordered_results:
+        node = resolution.affinity.numa_node
+        if node is None:
+            raise RuntimeError(
+                "forced generic NUMA diagnostic produced a result without a node"
+            )
+        nodes.append(node)
+    return nodes
 
 
 def register() -> None:
@@ -86,6 +117,20 @@ def register() -> None:
             dp_local_rank,
             _numa_bind_enabled(vllm_config),
         )
+        parallel_config = getattr(vllm_config, "parallel_config", None)
+        if (
+            _force_generic_enabled()
+            and parallel_config is not None
+            and getattr(parallel_config, "numa_bind", False)
+            and getattr(parallel_config, "numa_bind_nodes", None) is None
+        ):
+            nodes = _generic_numa_nodes(numa_utils)
+            parallel_config.numa_bind_nodes = nodes
+            logger.warning(
+                "[kunpeng-affinity-demo] forced generic NUMA path selected "
+                "nodes=%s; native GPU NUMA query bypassed",
+                nodes,
+            )
         with current(*args, **kwargs):
             yield
 
