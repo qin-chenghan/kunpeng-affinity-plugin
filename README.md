@@ -125,8 +125,10 @@ assert batch.committable
 ```
 
 See `docs/provider-batch-demo.md` for the mapping contract and failure
-semantics. The static provider is a configuration/test implementation; a
-target GPU runtime provider must be added before framework integration.
+semantics. `StaticMappingProvider` is a configuration/test implementation.
+`LinuxContextProvider` accepts only an already-proven BDF carried by the
+framework context or a device path; a target GPU runtime provider is still
+needed when the framework does not expose either fact.
 
 ## Optional package artifact
 

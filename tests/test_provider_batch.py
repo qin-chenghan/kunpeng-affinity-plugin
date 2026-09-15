@@ -6,7 +6,12 @@ from pathlib import Path
 
 from kunpeng_affinity.core.models import DeviceContext, DeviceMapping
 from kunpeng_affinity.policy import GenericAffinityProvider
-from kunpeng_affinity.providers import ProviderRegistry, StaticMappingProvider
+from kunpeng_affinity.providers import (
+    LinuxContextProvider,
+    ProviderRegistry,
+    StaticMappingProvider,
+    VllmPlatformProvider,
+)
 from kunpeng_affinity.topology.models import ResultStatus
 
 
@@ -64,6 +69,158 @@ class ProviderRegistryTest(unittest.TestCase):
             registry.select((context(0),))
 
 
+class LinuxContextProviderTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+        (self.root / "devices/pci0000:00/0000:00:01.0/0000:01:00.0").mkdir(
+            parents=True
+        )
+        (self.root / "bus/pci/devices").mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        self.tempdir.cleanup()
+
+    def test_prefers_explicit_bdf_and_normalizes_it(self) -> None:
+        provider = LinuxContextProvider(sysfs_root=self.root)
+        mappings = provider.map_all(
+            (
+                DeviceContext(
+                    framework="test",
+                    logical_device_id=0,
+                    explicit_bdf="00000000:AB:00.0",
+                    runtime_device_id="0000:CD:00.0",
+                ),
+            )
+        )
+
+        self.assertEqual(mappings[0].pci_bdf, "0000:ab:00.0")
+        self.assertEqual(mappings[0].source, "explicit-config")
+
+    def test_accepts_bdf_from_runtime_context(self) -> None:
+        provider = LinuxContextProvider(sysfs_root=self.root)
+        mappings = provider.map_all(
+            (
+                DeviceContext(
+                    framework="test",
+                    logical_device_id=0,
+                    runtime_device_id="AB:00.0",
+                ),
+            )
+        )
+
+        self.assertEqual(mappings[0].pci_bdf, "0000:ab:00.0")
+        self.assertEqual(mappings[0].source, "framework-context")
+
+    def test_resolves_bdf_from_a_device_path(self) -> None:
+        device_path = self.root / "devices/pci0000:00/0000:00:01.0/0000:01:00.0"
+        provider = LinuxContextProvider(sysfs_root=self.root)
+
+        mappings = provider.map_all(
+            (
+                DeviceContext(
+                    framework="test",
+                    logical_device_id=0,
+                    device_node=str(device_path),
+                ),
+            )
+        )
+
+        self.assertEqual(mappings[0].pci_bdf, "0000:01:00.0")
+        self.assertEqual(mappings[0].source, "linux-device-context")
+
+    def test_does_not_infer_bdf_from_logical_id(self) -> None:
+        provider = LinuxContextProvider(sysfs_root=self.root)
+
+        with self.assertRaisesRegex(RuntimeError, "no provable PCI BDF"):
+            provider.map_all((context(0),))
+
+    def test_probe_rejects_incomplete_context(self) -> None:
+        provider = LinuxContextProvider(sysfs_root=self.root)
+
+        result = provider.probe((context(0),))
+
+        self.assertFalse(result.supported)
+        self.assertIn("no provable PCI BDF", result.reason or "")
+
+    def test_probe_rejects_invalid_explicit_bdf(self) -> None:
+        provider = LinuxContextProvider(sysfs_root=self.root)
+        invalid = DeviceContext(
+            framework="test",
+            logical_device_id=0,
+            explicit_bdf="not-a-bdf",
+        )
+
+        result = provider.probe((invalid,))
+
+        self.assertFalse(result.supported)
+        self.assertIn("invalid BDF", result.reason or "")
+
+    def test_probe_rejects_duplicate_bdfs(self) -> None:
+        provider = LinuxContextProvider(sysfs_root=self.root)
+        contexts = (
+            DeviceContext(
+                framework="test", logical_device_id=0, explicit_bdf="01:00.0"
+            ),
+            DeviceContext(
+                framework="test", logical_device_id=1, explicit_bdf="01:00.0"
+            ),
+        )
+
+        result = provider.probe(contexts)
+
+        self.assertFalse(result.supported)
+        self.assertIn("mapped more than once", result.reason or "")
+
+
+class VllmPlatformProviderTest(unittest.TestCase):
+    class FakePlatform:
+        @classmethod
+        def get_all_gpu_pci_bus_ids(cls):
+            return {0: "0000:ab:00.0", 1: "00000000:cd:00.0"}
+
+        @classmethod
+        def device_id_to_physical_device_id(cls, device_id: int) -> int:
+            return {0: 1, 1: 0}[device_id]
+
+    def test_maps_visible_ids_through_physical_ids(self) -> None:
+        provider = VllmPlatformProvider(self.FakePlatform)
+        mappings = provider.map_all(
+            (
+                context(0),
+                context(1),
+            )
+        )
+
+        self.assertEqual(
+            [mapping.pci_bdf for mapping in mappings],
+            ["0000:cd:00.0", "0000:ab:00.0"],
+        )
+        self.assertEqual(
+            [mapping.physical_device_id for mapping in mappings], [1, 0]
+        )
+        self.assertEqual(mappings[0].source, "vllm-platform-pci")
+
+    def test_probe_rejects_platform_without_identity_api(self) -> None:
+        provider = VllmPlatformProvider(object())
+
+        result = provider.probe((context(0),))
+
+        self.assertFalse(result.supported)
+        self.assertIn("get_all_gpu_pci_bus_ids", result.reason or "")
+
+    def test_rejects_invalid_platform_bdf(self) -> None:
+        class InvalidPlatform(self.FakePlatform):
+            @classmethod
+            def get_all_gpu_pci_bus_ids(cls):
+                return {0: "not-a-bdf"}
+
+        provider = VllmPlatformProvider(InvalidPlatform)
+
+        with self.assertRaisesRegex(RuntimeError, "invalid BDF"):
+            provider.map_all((context(1),))
+
+
 class GenericAffinityProviderTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -93,6 +250,27 @@ class GenericAffinityProviderTest(unittest.TestCase):
             [item.affinity.status for item in result.ordered_results],
             [ResultStatus.SUCCESS, ResultStatus.SUCCESS],
         )
+
+    def test_resolves_context_bdf_through_linux_provider(self) -> None:
+        resolver = GenericAffinityProvider(
+            LinuxContextProvider(),
+            sysfs_root=self.root,
+            allowed_cpus=set(range(8)),
+        )
+        result = resolver.resolve_all(
+            (
+                DeviceContext(
+                    framework="test",
+                    logical_device_id=0,
+                    runtime_device_id="00000000:01:00.0",
+                    visibility_fingerprint="visible-a",
+                ),
+            )
+        )
+
+        self.assertTrue(result.committable)
+        self.assertEqual(result.ordered_results[0].mapping.source, "framework-context")
+        self.assertEqual(result.ordered_results[0].affinity.numa_node, 0)
 
     def test_any_topology_failure_blocks_the_whole_batch(self) -> None:
         resolver = GenericAffinityProvider(

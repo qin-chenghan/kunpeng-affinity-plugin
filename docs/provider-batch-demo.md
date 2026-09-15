@@ -10,9 +10,23 @@ DeviceContext -> DeviceMapper -> canonical PCI BDF
               -> GenericAffinityProvider -> AffinityResult
 ```
 
-The demo does not enumerate GPUs, call a vendor runtime, execute `numactl`, or
-change process affinity. `StaticMappingProvider` stands in for a future target
-GPU provider and requires an explicit logical-device-to-BDF mapping.
+The demo does not enumerate GPUs, call a vendor runtime from the generic core,
+execute `numactl`, or change process affinity. The concrete mappers are:
+
+- `StaticMappingProvider`: requires an explicit logical-device-to-BDF mapping
+  and is intended for deployment configuration and tests.
+- `LinuxContextProvider`: accepts only a BDF already carried by
+  `DeviceContext.explicit_bdf`, a BDF-valued `runtime_device_id`, or a real
+  `device_node` path resolving below the configured sysfs devices tree.
+- `VllmPlatformProvider`: consumes the vLLM 0.23 platform methods
+  `get_all_gpu_pci_bus_ids()` and `device_id_to_physical_device_id()`; it is
+  loaded by an adapter and does not import vLLM in the framework-neutral core.
+
+`LinuxContextProvider` does not infer identity from logical IDs, sysfs ordering,
+bus numbers, names, or device model. A target GPU runtime provider is still
+required when the target framework or hardware exposes none of these trusted
+facts. The vLLM provider is not a replacement for a target provider on
+framework platforms that do not implement these APIs.
 
 ## Mapping contract
 
@@ -45,7 +59,7 @@ registered provider reports support. Zero providers returns
 
 ## Verification
 
-The unit tests cover input-order preservation, canonicalization, provider
-ambiguity, missing mappings, duplicate/malformed mapping boundaries,
-visibility mismatch, per-device topology failure, and successful multi-device
-resolution.
+The unit tests cover input-order preservation, canonicalization, explicit and
+context-derived BDFs, device-path resolution, provider ambiguity, missing
+mappings, duplicate/malformed mapping boundaries, visibility mismatch,
+per-device topology failure, and successful multi-device resolution.
