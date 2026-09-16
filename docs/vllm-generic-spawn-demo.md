@@ -104,8 +104,10 @@ Linux sysfs, inject the node list, and bind a dummy child through vLLM's
 existing wrapper.
 
 Both modes passed in the isolated vLLM 0.26.0 single-GPU environment recorded
-by the project test report. That result is compatibility evidence for the exact
-tested package and topology, not a blanket vLLM 0.26 compatibility claim.
+by the project test report and were rerun successfully after the Registry,
+visibility-fingerprint, and commit-transaction changes in commit `0e8367e`.
+That result is compatibility evidence for the exact tested package and topology,
+not a blanket vLLM 0.26 compatibility claim.
 
 It does not prove support for other framework versions, multi-device rank
 layouts, Ray or external launchers, EngineCore-to-Worker CPU supersets, real

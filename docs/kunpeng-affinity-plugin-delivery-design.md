@@ -1205,7 +1205,7 @@ Python 源码包（发布时可选 wheel）
 | vLLM `v0.23.0` 完整集成 | 待验证 | 源码契约已确认，运行闭环未完成。 |
 | SGLang 适配 | 后续阶段 | 通用核心可复用，Adapter 尚未实施。 |
 
-当前源码单元测试共 72 项，覆盖通用拓扑、Provider/批量解析、Registry 无匹配/歧义/显式选择、上下文 BDF、vLLM 平台 BDF 映射、稳定 fingerprint 与可见顺序变化、PCI class 候选发现、node 配置事务与回滚、模拟 vLLM Hook、native 校验、generic 回退、三种插件模式、visibility 提交前变化、兼容门控、显式字段保护和框架执行异常传播。另已在 vLLM 0.26 单 GPU 隔离环境验证：真实插件 entry point 被加载；强制 generic 路径确认 native 查询未调用；auto-fallback 路径确认受控 native 查询调用一次并返回无结果后进入 generic；两条路径均经平台 API 映射到 BDF、通过 Linux sysfs 得出节点，并由原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。新增 Registry、fingerprint 和事务能力尚未重新执行该远端 spawn 验证；现有结果不替代目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。
+当前源码单元测试共 72 项，覆盖通用拓扑、Provider/批量解析、Registry 无匹配/歧义/显式选择、上下文 BDF、vLLM 平台 BDF 映射、稳定 fingerprint 与可见顺序变化、PCI class 候选发现、node 配置事务与回滚、模拟 vLLM Hook、native 校验、generic 回退、三种插件模式、visibility 提交前变化、兼容门控、显式字段保护和框架执行异常传播。提交 `0e8367e` 已在 vLLM 0.26 单 GPU 隔离环境重新验证：真实插件 entry point 被加载；强制 generic 路径确认 native 查询未调用；auto-fallback 路径确认受控 native 查询调用一次并返回无结果后进入 Registry generic；两条路径均经平台 API 映射到 BDF、生成并复核 fingerprint、通过 Linux sysfs 得出节点，并由原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。该结果不替代目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。
 
 ### 21.2 vLLM 自动绑核运行闭环
 
@@ -1220,14 +1220,14 @@ Python 源码包（发布时可选 wheel）
 | 5 | 逻辑 GPU 映射为可信 PCI BDF | 部分完成 | vLLM 平台 Provider 已在 0.26 单 GPU 真实进程完成 logical device -> physical ID -> BDF 验证；非原生目标平台仍需要其 Runtime Provider 契约，多 GPU 可见顺序仍待真实验证。 |
 | 6 | 根据 BDF 检测 PCIe/NUMA 拓扑 | 已实现 | 已支持 BDF 规范化、真实 sysfs 父链、Endpoint/祖先 NUMA 证据、直连及任意层级 Switch；fixture 已覆盖，另有真实 Linux 主机成功报告。 |
 | 7 | 计算当前进程可用目标 CPU 集合 | 已实现 | 已实现 `node CPUs ∩ online CPUs ∩ sched_getaffinity(0)`，并处理证据冲突、未知 NUMA 和空交集。 |
-| 8 | 按优先级选择显式、原生或通用结果 | 已实现并验证 Demo | 已实现 native 完整结果校验、Registry generic 回退、`auto` 失败直接 yield、`strict` 稳定错误码和绝对 `off`；node 写入具备锁、visibility 二次复核和进入失败回滚。模拟契约测试已通过，旧版 vLLM 0.26 单 GPU auto-fallback dummy spawn 已通过但需对本轮改造复测。 |
+| 8 | 按优先级选择显式、原生或通用结果 | 已实现并验证 Demo | 已实现 native 完整结果校验、Registry generic 回退、`auto` 失败直接 yield、`strict` 稳定错误码和绝对 `off`；node 写入具备锁、visibility 二次复核和进入失败回滚。模拟契约测试和提交 `0e8367e` 的 vLLM 0.26 单 GPU forced-generic/auto-fallback dummy spawn 均已通过。 |
 | 9 | 对正确 vLLM 进程执行并验证绑核 | 部分完成 | vLLM 0.26 dummy Worker 已验证原 wrapper 的 CPU affinity 和 memory policy；EngineCore、真实 Worker、目标 0.23、多进程映射和失败回退仍待验证。 |
 
 按上述严格口径，当前为 5 项已实现、4 项部分完成。关键步骤 5、8、9 中，状态机代码已经形成，但目标硬件 Provider、多 GPU/EngineCore 和完整框架生命周期仍未完成，因此交付物仍属于“通用基础能力和受控集成 Demo”，不能称为生产可用的自动绑核插件。
 
 ### 21.3 当前阶段结论
 
-当前可以确认的是：插件已经实现 `explicit -> native -> Registry generic -> skip/fail` 状态机；generic 结果包含有序设备映射 fingerprint，提交前会重新采样，node 配置使用带锁事务并在原执行器进入失败时回滚。此前 vLLM 0.26 受控环境已完成 logical device 经 BDF、Linux sysfs 到 dummy Worker 实际绑定的闭环，但本轮 Registry/fingerprint/事务改造仍需重新执行该集成验证。下一验证入口是 0.26 回归、目标 0.23 契约与 spawn、EngineCore 和完整服务生命周期。目标非原生 GPU 仍需明确 Runtime Provider 契约；当前结果不能外推为多 GPU、真实 PCIe Switch 或生产服务验收。
+当前可以确认的是：插件已经实现 `explicit -> native -> Registry generic -> skip/fail` 状态机；generic 结果包含有序设备映射 fingerprint，提交前会重新采样，node 配置使用带锁事务并在原执行器进入失败时回滚。提交 `0e8367e` 已在 vLLM 0.26 受控环境完成 logical device 经 BDF、Linux sysfs 到 dummy Worker 实际绑定的回归闭环。下一验证入口是跨 spawn fingerprint 契约、目标 0.23 契约与 spawn、EngineCore 和完整服务生命周期。目标非原生 GPU 仍需明确 Runtime Provider 契约；当前结果不能外推为多 GPU、真实 PCIe Switch 或生产服务验收。
 
 ## 22. 待决策事项
 
