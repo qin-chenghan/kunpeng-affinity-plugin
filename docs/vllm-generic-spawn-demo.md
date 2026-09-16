@@ -1,4 +1,4 @@
-# vLLM Forced-Generic Spawn Diagnostic
+# vLLM Generic-Fallback Spawn Diagnostics
 
 ## Purpose
 
@@ -16,9 +16,10 @@ vLLM plugin discovery
 -> dummy child CPU affinity
 ```
 
-It does not start an engine, load a model, run GPU computation, implement the
-production native-to-generic fallback, or validate an unsupported accelerator
-Provider.
+It does not start an engine, load a model, run GPU computation, or validate an
+unsupported accelerator Provider. One entry forces generic discovery directly;
+the other exercises the production native-to-generic decision with a controlled
+native no-result response.
 
 ## Safety Gates
 
@@ -27,7 +28,7 @@ The forced path is selected only when all of the following are true:
 - `KUNPENG_AFFINITY_VLLM_FORCE_GENERIC` is a true value;
 - vLLM's `parallel_config.numa_bind` is enabled;
 - the user did not provide `numa_bind_nodes`;
-- vLLM's automatic-binding eligibility check succeeds;
+- the plugin's vendor-neutral automatic-binding eligibility checks succeed;
 - the platform exposes a valid device count and logical-to-physical identity;
 - every visible device maps to a unique PCI BDF;
 - every BDF produces a bindable Linux topology result.
@@ -72,9 +73,11 @@ A successful JSON result contains:
 - selected fields from the child's `numactl --show` output and a separate
   `memory_policy_verified` result.
 
-The script replaces `get_auto_numa_nodes()` with a function that raises if it
-is called. Therefore success is direct evidence that the native GPU NUMA query
-was bypassed. Before importing vLLM, it also sets
+In forced-generic mode, the script replaces `get_auto_numa_nodes()` with a
+function that raises if called; success is direct evidence that native GPU NUMA
+discovery was bypassed. In auto-fallback mode, the replacement returns `None`
+and the script requires exactly one native call before generic discovery. Before
+importing vLLM, both modes set
 `VLLM_WORKER_MULTIPROC_METHOD=spawn`, which vLLM requires before it will replace
 the multiprocessing executable with its numactl wrapper. The child is started
 with Python multiprocessing `spawn` while the real vLLM
@@ -99,6 +102,10 @@ Success proves the tested framework package can discover the plugin, map its
 visible device through the platform PCI identity API, resolve that BDF through
 Linux sysfs, inject the node list, and bind a dummy child through vLLM's
 existing wrapper.
+
+Both modes passed in the isolated vLLM 0.26.0 single-GPU environment recorded
+by the project test report. That result is compatibility evidence for the exact
+tested package and topology, not a blanket vLLM 0.26 compatibility claim.
 
 It does not prove support for other framework versions, multi-device rank
 layouts, Ray or external launchers, EngineCore-to-Worker CPU supersets, real

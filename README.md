@@ -60,9 +60,10 @@ The diagnostic override still requires vLLM's `numa_bind=True`, preserves explic
 query. The switch is disabled by default and fails strictly because it is a
 verification aid, not a production policy control.
 
-The target contract is vLLM 0.23.0. vLLM 0.26.0 has additionally passed the
-single-device dummy spawn diagnostic, but neither version has completed the
-full compatibility and binding validation matrix.
+The target contract is vLLM 0.23.0. vLLM 0.26.0 has additionally passed both
+forced-generic and automatic-fallback single-device dummy spawn diagnostics,
+but neither version has completed the full compatibility and binding
+validation matrix.
 
 ## Source deployment
 
