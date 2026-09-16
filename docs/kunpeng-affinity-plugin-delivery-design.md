@@ -362,6 +362,9 @@ failure_summary
 | `diagnostic_level` | `error / summary / detail` | `summary` | 控制诊断粒度。 |
 | `cache_topology` | `true / false` | `true` | 只缓存与进程 affinity 无关的静态拓扑事实。 |
 
+当前 Demo 已落地 `KUNPENG_AFFINITY_MODE=off|auto|strict`，默认值为
+`auto`。其余配置项仍是正式接口设计，尚未全部形成稳定的环境变量或配置文件契约。
+
 约束：
 
 - 插件仅在框架 NUMA 绑定开关已开启时运行；`mode=auto` 不等于自动开启框架绑核。
@@ -644,8 +647,8 @@ Wrapper 使用私有 marker 保存原函数。重复调用入口时检测 marker
 sequenceDiagram
     participant Caller as EngineCore/Worker launcher
     participant Hook as configure_subprocess_wrapper
-    participant Gate as EligibilityChecker
     participant Native as original get_auto_numa_nodes
+    participant Gate as Generic EligibilityChecker
     participant Batch as BatchAffinityResolver
     participant Config as ParallelConfig
     participant Original as original configure_subprocess
@@ -656,25 +659,27 @@ sequenceDiagram
     alt 关闭或显式节点存在
         Hook->>Original: 原样委托
     else 节点缺失
-        Hook->>Gate: 检查系统前置条件
-        alt 不允许自动绑定
-            Hook->>Hook: 按框架保护语义退出
-        else 允许
-            Hook->>Native: 查询并校验完整列表
-            alt native 有效
-                Hook->>Config: 原子写入 nodes
-            else native 设备能力失败
+        Hook->>Native: 查询并校验完整列表
+        alt native 有效
+            Hook->>Config: 原子写入 nodes
+            Hook->>Original: 使用完整配置生成绑定参数
+        else native 不支持、失败或结果无效
+            Hook->>Gate: 检查厂商无关的系统前置条件
+            alt generic 前置条件不满足
+                Hook->>Hook: 自动直接 yield 或严格抛错
+            else 允许 generic
                 Hook->>Batch: 构造上下文并查询全部设备
                 alt generic 全部成功
                     Hook->>Config: 原子写入缺失字段
+                    Hook->>Original: 使用完整配置生成绑定参数
                 else generic 失败
-                    Hook->>Hook: 自动跳过或严格抛错
+                    Hook->>Hook: 自动直接 yield 或严格抛错
                 end
             end
-            Hook->>Original: 使用完整配置生成绑定参数
         end
     end
-    Original->>Proc: 框架原执行链启动
+    Hook-->>Caller: context 就绪
+    Caller->>Proc: proc.start
 ```
 
 ### 12.3 配置提交事务
@@ -1182,7 +1187,7 @@ Python 源码包（发布时可选 wheel）
 | 能力 | 当前状态 | 与正式设计的差距 |
 |---|---|---|
 | Python 包与 vLLM entry point | 已实现 Demo | 元数据、editable install 及 vLLM 0.26 真实 `load_general_plugins()` 已验证；目标 0.23 完整启动链和所有相关进程的加载时机仍待验证。 |
-| `configure_subprocess` 幂等 Hook | 已实现 Demo | 默认仍只记录并原样委托；诊断开关下可提交通用节点并调用原执行器，正式 native -> generic 状态机尚未实现。 |
+| `configure_subprocess` 幂等 Hook | 已实现 Demo | 已实现版本和签名门控、`off/auto/strict` 模式及正式决策入口；目标 0.23 完整进程生命周期仍待验证。 |
 | BDF 规范化 | 已实现并测试 | 需补全稳定错误码和发布级输入契约。 |
 | sysfs PCIe 父链 | 已实现并测试 | 需增加热插拔复核和可选 port type。 |
 | NUMA 证据与冲突检测 | 已实现并测试 | 需拆分 resolver 并补充 memory-only node 策略。 |
@@ -1194,12 +1199,12 @@ Python 源码包（发布时可选 wheel）
 | vLLM 平台 BDF Provider | 已实现并测试 | 使用 `get_all_gpu_pci_bus_ids()` 与 `device_id_to_physical_device_id()`；假平台覆盖可见设备重排，vLLM 0.26 单 GPU 真实平台已完成 BDF 到 sysfs 接入验证，目标 0.23 和非原生目标平台仍待验证。 |
 | 目标 GPU Provider | 拟实现 | 需结合尚未确定的目标运行时或设备节点契约，将框架 logical device/rank 映射到唯一 BDF。 |
 | 批量事务 | 已实现 Demo | 已实现按输入顺序解析、BDF 再校验、fingerprint 一致性和 all-or-nothing 可提交判定。 |
-| native -> generic 回退 | 部分实现 | 默认关闭的强制通用诊断分支已接入 Hook，可证明绕过 native 查询；生产态 native 先行、generic 回退及自动/严格失败策略尚未实现。 |
+| native -> generic 回退 | 已实现 Demo | 已实现并单测 `explicit -> native -> generic -> skip/fail`，另保留强制 generic 诊断开关；真实自动回退 spawn 仍待远端验证。 |
 | `numactl` 和实际 affinity | 部分验证 | vLLM 0.26 dummy Worker 已通过原 `numactl` wrapper 验证 CPU 和 memory policy；EngineCore、真实 Worker 生命周期及目标 0.23 仍待验证。 |
 | vLLM `v0.23.0` 完整集成 | 待验证 | 源码契约已确认，运行闭环未完成。 |
 | SGLang 适配 | 后续阶段 | 通用核心可复用，Adapter 尚未实施。 |
 
-当前源码单元测试共 44 项，覆盖通用拓扑、Provider/批量解析、上下文 BDF、vLLM 平台 BDF 映射、PCI class 候选发现、模拟 vLLM Hook 及强制通用分支的门控和失败原子性。另已在 vLLM 0.26 单 GPU 隔离环境验证：真实插件 entry point 被加载，native GPU NUMA 查询未调用，逻辑设备经平台 API 映射到 BDF，Linux sysfs 得出节点，原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。该结果是 0.26 单 GPU Worker 级诊断证据，不替代目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。
+当前源码单元测试共 60 项，覆盖通用拓扑、Provider/批量解析、上下文 BDF、vLLM 平台 BDF 映射、PCI class 候选发现、模拟 vLLM Hook、native 校验、generic 回退、三种插件模式、兼容门控、显式字段保护和框架执行异常传播。另已在 vLLM 0.26 单 GPU 隔离环境验证：真实插件 entry point 被加载，native GPU NUMA 查询未调用，逻辑设备经平台 API 映射到 BDF，Linux sysfs 得出节点，原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。该结果是 0.26 单 GPU Worker 级强制 generic 诊断证据，不替代正常自动回退、目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。
 
 ### 21.2 vLLM 自动绑核运行闭环
 
@@ -1208,31 +1213,30 @@ Python 源码包（发布时可选 wheel）
 | 步骤 | 运行链路 | 状态 | 当前证据与缺口 |
 |---|---|---|---|
 | 1 | vLLM 自动发现并加载插件 | 部分完成 | 已验证 entry point 元数据、editable install 和 vLLM 0.26 真实加载；目标 0.23 完整启动链及各相关进程加载时机仍待验证。 |
-| 2 | 拦截 Worker 子进程初始化入口 | 已实现 Demo | 已安装签名受控、幂等且保持 context manager 语义的包装器；默认原样委托，诊断模式提交节点后仍调用原函数。 |
+| 2 | 拦截 Worker 子进程初始化入口 | 已实现 Demo | 已安装版本/签名受控、幂等且保持 context manager 语义的包装器；自动或诊断结果成功后均调用原函数。 |
 | 3 | 提取 rank、逻辑设备和进程上下文 | 部分完成 | 已观察框架配置、rank、进程类型和版本，并能按平台可见设备数构造有序 `DeviceContext`；TP/DP、多 GPU 和 visibility fingerprint 尚未完成运行验证。 |
-| 4 | 识别并保护用户显式配置 | 部分完成 | 诊断分支仅在 `numa_bind=True` 且节点缺失时运行，显式节点和关闭状态均已测试保护；正式字段级 native/generic 决策及全部显式 CPU 组合仍待完成。 |
+| 4 | 识别并保护用户显式配置 | 已实现 Demo | 仅在 `numa_bind=True` 且节点缺失时运行；显式节点直接委托，显式 CPU 在补齐节点时保持不变，关闭状态不查询。配置模型的全部组合仍需目标版本契约测试。 |
 | 5 | 逻辑 GPU 映射为可信 PCI BDF | 部分完成 | vLLM 平台 Provider 已在 0.26 单 GPU 真实进程完成 logical device -> physical ID -> BDF 验证；非原生目标平台仍需要其 Runtime Provider 契约，多 GPU 可见顺序仍待真实验证。 |
 | 6 | 根据 BDF 检测 PCIe/NUMA 拓扑 | 已实现 | 已支持 BDF 规范化、真实 sysfs 父链、Endpoint/祖先 NUMA 证据、直连及任意层级 Switch；fixture 已覆盖，另有真实 Linux 主机成功报告。 |
 | 7 | 计算当前进程可用目标 CPU 集合 | 已实现 | 已实现 `node CPUs ∩ online CPUs ∩ sched_getaffinity(0)`，并处理证据冲突、未知 NUMA 和空交集。 |
-| 8 | 按优先级选择显式、原生或通用结果 | 部分完成 | 强制通用诊断模式已实现显式节点保护、通用批量解析和节点提交；正式 `explicit -> native -> generic -> skip/fail` 状态机仍待实现。 |
+| 8 | 按优先级选择显式、原生或通用结果 | 已实现 Demo | 已实现 native 完整结果校验、generic 回退、`auto` 失败直接 yield、`strict` 稳定错误码和 `off` 原行为，并通过模拟契约测试；真实自动回退 spawn 尚待验证。 |
 | 9 | 对正确 vLLM 进程执行并验证绑核 | 部分完成 | vLLM 0.26 dummy Worker 已验证原 wrapper 的 CPU affinity 和 memory policy；EngineCore、真实 Worker、目标 0.23、多进程映射和失败回退仍待验证。 |
 
-按上述严格口径，当前为 3 项已实现、6 项部分完成。关键步骤 5、8、9 虽已取得单 GPU dummy Worker 证据，但生产回退策略、目标硬件 Provider 和完整框架生命周期仍未完成，因此交付物仍属于“通用基础能力和受控集成 Demo”，不能称为生产可用的自动绑核插件。
+按上述严格口径，当前为 5 项已实现、4 项部分完成。关键步骤 5、8、9 中，状态机代码已经形成，但目标硬件 Provider、多 GPU/EngineCore 和完整框架生命周期仍未完成，因此交付物仍属于“通用基础能力和受控集成 Demo”，不能称为生产可用的自动绑核插件。
 
 ### 21.3 当前阶段结论
 
-当前可以确认的是：插件能够在 vLLM 0.26 中从 logical device 经 BDF 和 Linux sysfs 得到节点，并通过框架原执行器真实绑定 dummy Worker；强制模式还证明了该结果不来自 native GPU NUMA 查询。下一开发入口是把受控强制分支演进为正式的 `explicit -> native -> generic -> skip/fail` 状态机，并补齐 EngineCore 和完整服务生命周期验证。目标非原生 GPU 仍需明确 Runtime Provider 契约；当前结果不能外推为目标 0.23、多 GPU、真实 PCIe Switch 或生产服务验收。
+当前可以确认的是：插件已经实现 `explicit -> native -> generic -> skip/fail` 状态机，并能在 vLLM 0.26 中从 logical device 经 BDF 和 Linux sysfs 得到节点，再通过框架原执行器真实绑定 dummy Worker；强制模式证明了该结果不来自 native GPU NUMA 查询。下一验证入口是正常 `auto` 模式下的 native 失败到 generic 成功闭环，随后补齐 EngineCore 和完整服务生命周期验证。目标非原生 GPU 仍需明确 Runtime Provider 契约；当前结果不能外推为目标 0.23、多 GPU、真实 PCIe Switch 或生产服务验收。
 
 ## 22. 待决策事项
 
-在进入正式编码前需要由项目确认：
+继续完成正式交付前需要由项目确认：
 
 1. 第一批目标 GPU Provider 的运行时身份接口或设备节点契约；
 2. `cpu_policy=exact` 是否作为首版稳定能力；
-3. 自动模式通用失败后是否允许无额外绑定继续启动；
-4. 配置文件格式及 Provider 外部扩展是否使用独立 entry point；
-5. 首版支持的 vLLM 执行后端范围；
-6. 真实多 GPU、单级 Switch 和多级 Switch 验收资源；
-7. 性能回归阈值和启动开销阈值。
+3. 配置文件格式及 Provider 外部扩展是否使用独立 entry point；
+4. 首版支持的 vLLM 执行后端范围；
+5. 真实多 GPU、单级 Switch 和多级 Switch 验收资源；
+6. 性能回归阈值和启动开销阈值。
 
 在这些事项确认前，可以继续完善目标 GPU Provider、vLLM 契约测试和不受策略影响的诊断能力；不得对未确认策略做不可逆的公共接口承诺。

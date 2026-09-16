@@ -75,7 +75,19 @@ def _config():
 
 
 def main() -> int:
-    os.environ["KUNPENG_AFFINITY_VLLM_FORCE_GENERIC"] = "1"
+    verification_path = os.environ.get(
+        "KUNPENG_AFFINITY_VERIFY_PATH",
+        "forced-generic",
+    )
+    if verification_path not in {"forced-generic", "auto-fallback"}:
+        raise RuntimeError(
+            "KUNPENG_AFFINITY_VERIFY_PATH must be forced-generic or auto-fallback"
+        )
+    os.environ["KUNPENG_AFFINITY_MODE"] = "auto"
+    if verification_path == "forced-generic":
+        os.environ["KUNPENG_AFFINITY_VLLM_FORCE_GENERIC"] = "1"
+    else:
+        os.environ.pop("KUNPENG_AFFINITY_VLLM_FORCE_GENERIC", None)
     os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
     from vllm.plugins import load_general_plugins
@@ -86,10 +98,16 @@ def main() -> int:
     if not hasattr(hook, "__kunpeng_affinity_original__"):
         raise RuntimeError("kunpeng affinity vLLM hook was not installed")
 
-    def native_query_must_not_run():
-        raise AssertionError("vLLM native GPU NUMA query was called")
+    native_query_calls = 0
 
-    numa_utils.get_auto_numa_nodes = native_query_must_not_run
+    def controlled_native_query():
+        nonlocal native_query_calls
+        native_query_calls += 1
+        if verification_path == "forced-generic":
+            raise AssertionError("vLLM native GPU NUMA query was called")
+        return None
+
+    numa_utils.get_auto_numa_nodes = controlled_native_query
     config = _config()
     context = multiprocessing.get_context("spawn")
     receive_connection, send_connection = context.Pipe(duplex=False)
@@ -139,12 +157,20 @@ def main() -> int:
         result["numactl"].get("policy") == "bind"
         and actual_memory_nodes == expected_nodes
     )
+    expected_native_calls = 0 if verification_path == "forced-generic" else 1
+    if native_query_calls != expected_native_calls:
+        raise RuntimeError(
+            f"native query call mismatch: expected={expected_native_calls} "
+            f"actual={native_query_calls}"
+        )
 
     print(
         json.dumps(
             {
                 "status": "success",
-                "native_numa_query_called": False,
+                "verification_path": verification_path,
+                "native_numa_query_calls": native_query_calls,
+                "generic_fallback_verified": verification_path == "auto-fallback",
                 "generic_nodes": nodes,
                 "expected_cpus": format_cpulist(expected_cpus),
                 "memory_policy_verified": memory_policy_verified,

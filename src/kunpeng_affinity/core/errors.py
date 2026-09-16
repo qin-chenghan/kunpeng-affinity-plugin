@@ -14,6 +14,10 @@ class AffinityError(RuntimeError):
             self.code = code
 
 
+class AffinityConfigurationError(AffinityError):
+    """Plugin configuration is invalid and cannot be interpreted safely."""
+
+
 class AffinityDiscoveryError(AffinityError):
     """A device mapping or topology fact could not be established."""
 
@@ -28,3 +32,7 @@ class ProviderSelectionError(DeviceMappingError):
 
 class BatchValidationError(AffinityDiscoveryError):
     """A batch cannot be committed as a complete affinity result."""
+
+
+class AffinityIntegrationError(AffinityError):
+    """A strict framework integration cannot continue safely."""

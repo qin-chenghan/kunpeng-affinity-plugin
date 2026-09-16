@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,158 @@ from kunpeng_affinity.core.errors import AffinityDiscoveryError
 from kunpeng_affinity.core.models import BatchAffinityResult, DeviceContext
 from kunpeng_affinity.policy import GenericAffinityProvider
 from kunpeng_affinity.providers import VllmPlatformProvider
+from kunpeng_affinity.topology.cpulist import CpuListError, parse_cpulist
+
+
+def _device_count(platform: Any) -> int:
+    method = getattr(platform, "device_count", None)
+    if not callable(method):
+        raise AffinityDiscoveryError(
+            "vLLM platform does not expose device_count",
+            code="PROVIDER_UNAVAILABLE",
+        )
+    try:
+        count = method()
+    except (NotImplementedError, RuntimeError, OSError, ValueError) as exc:
+        raise AffinityDiscoveryError(
+            f"vLLM platform device count query failed: {exc}",
+            code="PROVIDER_UNAVAILABLE",
+        ) from exc
+    if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+        raise AffinityDiscoveryError(
+            f"vLLM platform returned invalid device count {count!r}",
+            code="DEVICE_COUNT_INVALID",
+        )
+    return count
+
+
+def check_vllm_generic_eligibility(
+    numa_utils: Any,
+    *,
+    sysfs_root: Path | str = Path("/sys"),
+    allowed_cpus: frozenset[int] | set[int] | None = None,
+) -> None:
+    """Apply vLLM's vendor-neutral automatic-binding safety gates."""
+    root = Path(sysfs_root)
+    if not (root / "devices/system/node/node1").is_dir():
+        raise AffinityDiscoveryError(
+            "automatic NUMA binding requires more than one NUMA node",
+            code="NUMA_NOT_AVAILABLE",
+        )
+
+    if allowed_cpus is None:
+        try:
+            effective_allowed = frozenset(os.sched_getaffinity(0))
+            cpu_count = os.cpu_count()
+        except (AttributeError, OSError):
+            effective_allowed = frozenset()
+            cpu_count = None
+        if cpu_count is not None and effective_allowed != frozenset(range(cpu_count)):
+            raise AffinityDiscoveryError(
+                "current process CPU affinity is already constrained",
+                code="AFFINITY_ALREADY_CONSTRAINED",
+            )
+
+    can_set_mempolicy = getattr(numa_utils, "_can_set_mempolicy", None)
+    if not callable(can_set_mempolicy) or not can_set_mempolicy():
+        raise AffinityDiscoveryError(
+            "NUMA memory policy is unavailable in the current process",
+            code="MEMPOLICY_UNAVAILABLE",
+        )
+    if shutil.which("numactl") is None:
+        raise AffinityDiscoveryError(
+            "numactl is not available on PATH",
+            code="BIND_EXECUTOR_MISSING",
+        )
+
+
+def resolve_vllm_native_nodes(
+    numa_utils: Any,
+    platform: Any,
+    *,
+    sysfs_root: Path | str = Path("/sys"),
+    allowed_cpus: frozenset[int] | set[int] | None = None,
+) -> list[int]:
+    """Call and validate vLLM's native GPU-to-NUMA query as a full batch."""
+    query = getattr(numa_utils, "get_auto_numa_nodes", None)
+    if not callable(query):
+        raise AffinityDiscoveryError(
+            "vLLM does not expose get_auto_numa_nodes",
+            code="NATIVE_QUERY_UNAVAILABLE",
+        )
+    try:
+        raw_nodes = query()
+    except (NotImplementedError, RuntimeError, OSError, ValueError) as exc:
+        raise AffinityDiscoveryError(
+            f"vLLM native NUMA query failed: {exc}",
+            code="NATIVE_QUERY_FAILED",
+        ) from exc
+    if raw_nodes is None:
+        raise AffinityDiscoveryError(
+            "vLLM native NUMA query returned no result",
+            code="NATIVE_QUERY_UNAVAILABLE",
+        )
+    if not isinstance(raw_nodes, list):
+        raise AffinityDiscoveryError(
+            f"vLLM native NUMA query returned {type(raw_nodes).__name__}, not list",
+            code="NATIVE_RESULT_INVALID",
+        )
+
+    count = _device_count(platform)
+    if len(raw_nodes) != count:
+        raise AffinityDiscoveryError(
+            f"vLLM native NUMA query returned {len(raw_nodes)} nodes for "
+            f"{count} visible devices",
+            code="DEVICE_COUNT_MISMATCH",
+        )
+
+    root = Path(sysfs_root)
+    try:
+        online = parse_cpulist(
+            (root / "devices/system/cpu/online").read_text(encoding="ascii")
+        )
+    except (OSError, CpuListError) as exc:
+        raise AffinityDiscoveryError(
+            f"cannot validate online CPUs: {exc}",
+            code="CPU_LIST_INVALID",
+        ) from exc
+    try:
+        effective_allowed = (
+            frozenset(allowed_cpus)
+            if allowed_cpus is not None
+            else frozenset(os.sched_getaffinity(0))
+        )
+    except (AttributeError, OSError) as exc:
+        raise AffinityDiscoveryError(
+            "current process CPU affinity is unavailable",
+            code="CPU_AFFINITY_UNAVAILABLE",
+        ) from exc
+
+    nodes: list[int] = []
+    for index, node in enumerate(raw_nodes):
+        if not isinstance(node, int) or isinstance(node, bool) or node < 0:
+            raise AffinityDiscoveryError(
+                f"vLLM native NUMA result at device {index} is invalid: {node!r}",
+                code="NATIVE_RESULT_INVALID",
+            )
+        try:
+            node_cpus = parse_cpulist(
+                (root / f"devices/system/node/node{node}/cpulist").read_text(
+                    encoding="ascii"
+                )
+            )
+        except (OSError, CpuListError) as exc:
+            raise AffinityDiscoveryError(
+                f"cannot validate NUMA node {node}: {exc}",
+                code="NUMA_NODE_INVALID",
+            ) from exc
+        if not node_cpus & online & effective_allowed:
+            raise AffinityDiscoveryError(
+                f"NUMA node {node} has no online CPUs allowed to this process",
+                code="CPU_SET_EMPTY",
+            )
+        nodes.append(node)
+    return nodes
 
 
 def resolve_vllm_generic_affinity(
@@ -18,24 +172,7 @@ def resolve_vllm_generic_affinity(
     allowed_cpus: frozenset[int] | set[int] | None = None,
 ) -> BatchAffinityResult:
     """Resolve every vLLM-visible device through BDF and Linux sysfs."""
-    device_count_method = getattr(platform, "device_count", None)
-    if not callable(device_count_method):
-        raise AffinityDiscoveryError(
-            "vLLM platform does not expose device_count",
-            code="PROVIDER_UNAVAILABLE",
-        )
-    try:
-        device_count = device_count_method()
-    except (NotImplementedError, RuntimeError, OSError) as exc:
-        raise AffinityDiscoveryError(
-            f"vLLM platform device count query failed: {exc}",
-            code="PROVIDER_UNAVAILABLE",
-        ) from exc
-    if not isinstance(device_count, int) or device_count <= 0:
-        raise AffinityDiscoveryError(
-            f"vLLM platform returned invalid device count {device_count!r}",
-            code="DEVICE_COUNT_INVALID",
-        )
+    device_count = _device_count(platform)
 
     contexts = tuple(
         DeviceContext(framework="vllm", logical_device_id=device_id)

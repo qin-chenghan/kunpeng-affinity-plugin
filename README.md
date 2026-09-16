@@ -1,9 +1,9 @@
 # Kunpeng Affinity Plugin
 
-This repository contains the incremental demos for the Kunpeng GPU affinity
-plugin. The current implementation includes the vLLM hook demo, the
-framework-independent Linux topology demo, the provider/batch resolution
-demo, and an opt-in vLLM forced-generic spawn diagnostic.
+This repository contains the incremental implementation of the Kunpeng GPU
+affinity plugin. It includes the vLLM decision hook, the framework-independent
+Linux topology core, provider/batch resolution, and isolated vLLM spawn
+diagnostics.
 
 It also contains Demo 2, a framework-independent, read-only Linux topology
 analyzer. Given a trusted PCI BDF, it follows the real sysfs parent path,
@@ -16,11 +16,35 @@ ordered batch is resolved through the same topology analyzer. Mapping errors,
 duplicate devices, visibility changes, and any per-device topology failure make
 the batch non-committable; no binding operation is executed.
 
-## Demo 1 behavior
+## vLLM plugin behavior
 
 The `vllm.general_plugins` entry point installs an idempotent wrapper around
-`vllm.utils.numa_utils.configure_subprocess`. By default, the wrapper only logs
-the process context and delegates without changing vLLM behavior.
+`vllm.utils.numa_utils.configure_subprocess`. The wrapper runs only when vLLM's
+own `numa_bind` switch is enabled and `numa_bind_nodes` is absent. Its normal
+decision order is:
+
+```text
+explicit nodes -> validated vLLM native nodes -> generic BDF/sysfs nodes
+```
+
+Explicit nodes always remain under vLLM control. Explicit `numa_bind_cpus` are
+preserved while the plugin fills only the missing node list. A successful
+automatic decision is passed to vLLM's original `configure_subprocess` and
+`numactl` execution chain.
+
+`KUNPENG_AFFINITY_MODE` controls failure behavior:
+
+| Value | Behavior |
+|---|---|
+| `auto` | Default. Try native then generic discovery; if both fail, add no binding and allow startup to continue. |
+| `strict` | Convert a plugin discovery failure into a startup error with a stable error code. |
+| `off` | Disable plugin discovery and preserve vLLM's original behavior. |
+
+Invalid plugin configuration always fails. Framework configuration, device
+index, and binding-executor errors are not treated as discovery failures and
+are not swallowed by `auto` mode. Unsupported vLLM versions or incompatible
+Hook signatures leave the Hook uninstalled in `auto`/`off` mode and fail early
+in `strict` mode.
 
 For isolated integration testing, setting
 `KUNPENG_AFFINITY_VLLM_FORCE_GENERIC=1` forces a missing
@@ -30,11 +54,11 @@ For isolated integration testing, setting
 vLLM logical device -> vLLM platform PCI BDF -> Linux sysfs -> NUMA node
 ```
 
-The diagnostic mode still requires vLLM's `numa_bind=True`, preserves explicit
+The diagnostic override still requires vLLM's `numa_bind=True`, preserves explicit
 `numa_bind_nodes`, and reuses vLLM's original `configure_subprocess` and
 `numactl` execution. It deliberately bypasses only vLLM's native GPU NUMA
-query. The switch is disabled by default and is not yet the production
-`native -> generic` fallback policy.
+query. The switch is disabled by default and fails strictly because it is a
+verification aid, not a production policy control.
 
 The target contract is vLLM 0.23.0. vLLM 0.26.0 has additionally passed the
 single-device dummy spawn diagnostic, but neither version has completed the
@@ -142,7 +166,7 @@ semantics. `StaticMappingProvider` is a configuration/test implementation.
 framework context or a device path; a target GPU runtime provider is still
 needed when the framework does not expose either fact.
 
-## vLLM forced-generic spawn diagnostic
+## vLLM spawn diagnostics
 
 After editable source installation in an isolated vLLM environment with
 `numactl`, run:
@@ -164,6 +188,13 @@ and compares the child's `Cpus_allowed_list` with the expected NUMA CPUs. It
 does not start the vLLM engine, load a model, or run GPU computation. See
 `docs/vllm-generic-spawn-demo.md` for the exact boundary.
 
+To exercise the normal `native -> generic` decision, make the controlled native
+query return no result and require generic fallback:
+
+```bash
+PYTHON_BIN=/path/to/vllm/python ./scripts/verify-vllm-auto-fallback-spawn.sh
+```
+
 ## Optional package artifact
 
 A wheel is an installable Python package, not an executable file. It is useful
@@ -179,8 +210,8 @@ with Python 3.10 or newer. The topology CLI and provider/batch core do not
 require vLLM, SGLang, CUDA, or a specific CPU architecture. The vLLM entry point
 is activated only when a compatible vLLM process loads general plugins.
 
-The current Hook can inject generic NUMA nodes only under the explicit
-diagnostic switch. Automatic `native -> generic` fallback and the full vLLM
-service lifecycle are not yet implemented. The formal delivery baseline is
+The current Hook implements automatic `native -> generic -> skip/fail`
+selection, but the full vLLM service lifecycle and target non-native GPU
+Runtime Provider are not yet complete. The formal delivery baseline is
 `docs/kunpeng-affinity-plugin-delivery-design.md`; it defines the implementation
 status, compatibility boundaries, and remaining development steps.

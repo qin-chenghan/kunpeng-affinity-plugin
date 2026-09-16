@@ -51,9 +51,21 @@ Then run the isolated spawn diagnostic:
 PYTHON_BIN=/path/to/vllm/python ./scripts/verify-vllm-generic-spawn.sh
 ```
 
+To verify the production `native -> generic` decision instead of directly
+forcing the generic branch, run:
+
+```bash
+PYTHON_BIN=/path/to/vllm/python ./scripts/verify-vllm-auto-fallback-spawn.sh
+```
+
+The second command makes the native query return no result, confirms it was
+called exactly once, then requires the generic fallback and child binding to
+succeed.
+
 A successful JSON result contains:
 
-- `native_numa_query_called: false`;
+- the selected `verification_path` and native query call count;
+- `generic_fallback_verified: true` for the auto-fallback diagnostic;
 - the generated `generic_nodes` list;
 - the expected NUMA CPU list;
 - the dummy child's actual `Cpus_allowed_list` and `Mems_allowed_list`;
