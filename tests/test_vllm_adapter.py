@@ -7,11 +7,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kunpeng_affinity.adapters import (
+    build_vllm_device_contexts,
     check_vllm_generic_eligibility,
     resolve_vllm_generic_affinity,
     resolve_vllm_native_nodes,
+    resolve_vllm_visibility_fingerprint,
 )
 from kunpeng_affinity.core.errors import AffinityDiscoveryError
+from kunpeng_affinity.providers import ProviderRegistry, StaticMappingProvider
 
 
 class FakePlatform:
@@ -67,6 +70,56 @@ class VllmGenericAdapterTest(unittest.TestCase):
         self.assertEqual(result.mapping.pci_bdf, "0000:ab:00.0")
         self.assertEqual(result.affinity.numa_node, 3)
         self.assertEqual(result.affinity.target_cpus, {9, 10, 11})
+        self.assertIsNotNone(batch.visibility_fingerprint)
+
+    def test_generic_path_uses_injected_provider_registry(self) -> None:
+        registry = ProviderRegistry(
+            (StaticMappingProvider({0: "0000:ab:00.0"}),)
+        )
+
+        batch = resolve_vllm_generic_affinity(
+            FakePlatform,
+            sysfs_root=self.root,
+            allowed_cpus={9, 10, 11},
+            registry=registry,
+            requested_provider="static",
+        )
+
+        self.assertTrue(batch.committable)
+        self.assertEqual(batch.ordered_results[0].mapping.source, "explicit-config")
+
+    def test_visibility_fingerprint_changes_with_visible_order(self) -> None:
+        class ReorderedPlatform:
+            visible = (0, 1)
+
+            @classmethod
+            def device_count(cls):
+                return 2
+
+            @classmethod
+            def get_all_gpu_pci_bus_ids(cls):
+                return {0: "01:00.0", 1: "02:00.0"}
+
+            @classmethod
+            def device_id_to_physical_device_id(cls, device_id):
+                return cls.visible[device_id]
+
+        first = resolve_vllm_visibility_fingerprint(ReorderedPlatform)
+        ReorderedPlatform.visible = (1, 0)
+        second = resolve_vllm_visibility_fingerprint(ReorderedPlatform)
+
+        self.assertNotEqual(first, second)
+
+    def test_context_builder_preserves_process_context(self) -> None:
+        contexts = build_vllm_device_contexts(
+            FakePlatform,
+            process_kind="EngineCore",
+            local_rank=4,
+        )
+
+        self.assertEqual(len(contexts), 1)
+        self.assertEqual(contexts[0].process_kind, "EngineCore")
+        self.assertEqual(contexts[0].local_rank, 4)
 
     def test_rejects_invalid_device_count(self) -> None:
         class EmptyPlatform(FakePlatform):

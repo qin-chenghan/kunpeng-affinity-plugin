@@ -59,6 +59,15 @@ class VllmPluginTest(unittest.TestCase):
         self.modules.stop()
         self.environment.stop()
 
+    @staticmethod
+    def resolution(nodes, source):
+        return vllm_plugin._AutomaticAffinityResolution(
+            nodes=tuple(nodes),
+            source=source,
+            visibility_fingerprint=None,
+            registry=None,
+        )
+
     def test_register_wraps_and_delegates(self) -> None:
         config = types.SimpleNamespace(
             parallel_config=types.SimpleNamespace(
@@ -128,7 +137,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(
                 vllm_plugin,
                 "_resolve_automatic_nodes",
-                return_value=([3], "generic"),
+                return_value=self.resolution([3], "generic"),
             ) as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
         ):
@@ -232,7 +241,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(
                 vllm_plugin,
                 "_resolve_automatic_nodes",
-                return_value=([1], "native"),
+                return_value=self.resolution([1], "native"),
             ) as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
@@ -257,17 +266,17 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(
                 vllm_plugin,
                 "_resolve_generic_nodes",
-                return_value=[3],
+                return_value=self.resolution([3], "generic"),
             ) as generic,
         ):
-            nodes, source = vllm_plugin._resolve_automatic_nodes(
+            resolution = vllm_plugin._resolve_automatic_nodes(
                 self.numa_utils,
                 object(),
                 force_generic=False,
             )
 
-        self.assertEqual(nodes, [3])
-        self.assertEqual(source, "generic")
+        self.assertEqual(resolution.nodes, (3,))
+        self.assertEqual(resolution.source, "generic")
         native.assert_called_once()
         generic.assert_called_once()
 
@@ -299,6 +308,43 @@ class VllmPluginTest(unittest.TestCase):
         self.assertIsNone(config.parallel_config.numa_bind_nodes)
         self.assertEqual(self.calls, [])
         self.assertIn("launching without additional binding", "\n".join(captured.output))
+
+    def test_visibility_change_skips_commit_in_auto_mode(self) -> None:
+        config = types.SimpleNamespace(
+            parallel_config=types.SimpleNamespace(
+                numa_bind=True,
+                numa_bind_nodes=None,
+            )
+        )
+        resolution = vllm_plugin._AutomaticAffinityResolution(
+            nodes=(1,),
+            source="generic",
+            visibility_fingerprint="before",
+            registry=object(),
+        )
+        with (
+            patch.object(vllm_plugin, "_current_platform", return_value=object()),
+            patch.object(
+                vllm_plugin,
+                "_resolve_automatic_nodes",
+                return_value=resolution,
+            ),
+            patch.object(
+                vllm_plugin,
+                "_revalidate_visibility",
+                side_effect=AffinityDiscoveryError(
+                    "visibility changed",
+                    code="VISIBILITY_CHANGED",
+                ),
+            ),
+            patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
+        ):
+            vllm_plugin.register()
+            with self.numa_utils.configure_subprocess(config, 0):
+                pass
+
+        self.assertIsNone(config.parallel_config.numa_bind_nodes)
+        self.assertEqual(self.calls, [])
 
     def test_strict_failure_stops_before_delegating(self) -> None:
         config = types.SimpleNamespace(
@@ -347,6 +393,32 @@ class VllmPluginTest(unittest.TestCase):
         resolver.assert_not_called()
         self.assertEqual(self.calls, [(config, 0, None, "worker")])
 
+    def test_off_mode_is_not_overridden_by_force_generic(self) -> None:
+        config = types.SimpleNamespace(
+            parallel_config=types.SimpleNamespace(
+                numa_bind=True,
+                numa_bind_nodes=None,
+            )
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "KUNPENG_AFFINITY_MODE": "off",
+                    "KUNPENG_AFFINITY_VLLM_FORCE_GENERIC": "1",
+                },
+            ),
+            patch.object(vllm_plugin, "_resolve_automatic_nodes") as resolver,
+            patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
+        ):
+            vllm_plugin.register()
+            with self.numa_utils.configure_subprocess(config, 0):
+                pass
+
+        resolver.assert_not_called()
+        self.assertIsNone(config.parallel_config.numa_bind_nodes)
+        self.assertEqual(self.calls, [(config, 0, None, "worker")])
+
     def test_explicit_cpus_are_preserved_when_nodes_are_resolved(self) -> None:
         config = types.SimpleNamespace(
             parallel_config=types.SimpleNamespace(
@@ -360,7 +432,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(
                 vllm_plugin,
                 "_resolve_automatic_nodes",
-                return_value=([1], "generic"),
+                return_value=self.resolution([1], "generic"),
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
@@ -396,7 +468,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(
                 vllm_plugin,
                 "_resolve_automatic_nodes",
-                return_value=([1], "generic"),
+                return_value=self.resolution([1], "generic"),
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
@@ -405,7 +477,7 @@ class VllmPluginTest(unittest.TestCase):
                 with self.numa_utils.configure_subprocess(config, 0):
                     pass
 
-        self.assertEqual(config.parallel_config.numa_bind_nodes, [1])
+        self.assertIsNone(config.parallel_config.numa_bind_nodes)
 
     def test_invalid_mode_fails_during_registration(self) -> None:
         with (

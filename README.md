@@ -59,6 +59,8 @@ The diagnostic override still requires vLLM's `numa_bind=True`, preserves explic
 `numactl` execution. It deliberately bypasses only vLLM's native GPU NUMA
 query. The switch is disabled by default and fails strictly because it is a
 verification aid, not a production policy control.
+`KUNPENG_AFFINITY_MODE=off` remains authoritative and disables this diagnostic
+override as well.
 
 The target contract is vLLM 0.23.0. vLLM 0.26.0 has additionally passed both
 forced-generic and automatic-fallback single-device dummy spawn diagnostics,

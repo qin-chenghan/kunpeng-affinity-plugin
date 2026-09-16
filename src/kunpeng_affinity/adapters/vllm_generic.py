@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from kunpeng_affinity.core.errors import AffinityDiscoveryError
 from kunpeng_affinity.core.models import BatchAffinityResult, DeviceContext
 from kunpeng_affinity.policy import GenericAffinityProvider
-from kunpeng_affinity.providers import VllmPlatformProvider
+from kunpeng_affinity.providers import ProviderRegistry, VllmPlatformProvider
 from kunpeng_affinity.topology.cpulist import CpuListError, parse_cpulist
 
 
@@ -34,6 +35,55 @@ def _device_count(platform: Any) -> int:
             code="DEVICE_COUNT_INVALID",
         )
     return count
+
+
+def create_vllm_provider_registry(
+    platform: Any,
+    *,
+    providers: Sequence[Any] = (),
+) -> ProviderRegistry:
+    """Build the provider set used by the vLLM generic path."""
+    registry = ProviderRegistry(providers)
+    registry.register(VllmPlatformProvider(platform))
+    return registry
+
+
+def build_vllm_device_contexts(
+    platform: Any,
+    *,
+    process_kind: str = "worker",
+    local_rank: int | None = None,
+) -> tuple[DeviceContext, ...]:
+    """Build one ordered context for every framework-visible device."""
+    return tuple(
+        DeviceContext(
+            framework="vllm",
+            logical_device_id=device_id,
+            process_kind=process_kind,
+            local_rank=local_rank,
+        )
+        for device_id in range(_device_count(platform))
+    )
+
+
+def resolve_vllm_visibility_fingerprint(
+    platform: Any,
+    *,
+    registry: ProviderRegistry | None = None,
+    requested_provider: str | None = None,
+    process_kind: str = "worker",
+    local_rank: int | None = None,
+) -> str:
+    """Capture the ordered logical-device mapping without topology I/O."""
+    contexts = build_vllm_device_contexts(
+        platform,
+        process_kind=process_kind,
+        local_rank=local_rank,
+    )
+    active_registry = registry or create_vllm_provider_registry(platform)
+    mapper = active_registry.select(contexts, requested=requested_provider)
+    _, fingerprint = GenericAffinityProvider(mapper).mapping_snapshot(contexts)
+    return fingerprint
 
 
 def check_vllm_generic_eligibility(
@@ -170,16 +220,21 @@ def resolve_vllm_generic_affinity(
     *,
     sysfs_root: Path | str = Path("/sys"),
     allowed_cpus: frozenset[int] | set[int] | None = None,
+    registry: ProviderRegistry | None = None,
+    requested_provider: str | None = None,
+    process_kind: str = "worker",
+    local_rank: int | None = None,
 ) -> BatchAffinityResult:
     """Resolve every vLLM-visible device through BDF and Linux sysfs."""
-    device_count = _device_count(platform)
-
-    contexts = tuple(
-        DeviceContext(framework="vllm", logical_device_id=device_id)
-        for device_id in range(device_count)
+    contexts = build_vllm_device_contexts(
+        platform,
+        process_kind=process_kind,
+        local_rank=local_rank,
     )
+    active_registry = registry or create_vllm_provider_registry(platform)
+    mapper = active_registry.select(contexts, requested=requested_provider)
     batch = GenericAffinityProvider(
-        VllmPlatformProvider(platform),
+        mapper,
         sysfs_root=sysfs_root,
         allowed_cpus=allowed_cpus,
     ).resolve_all(contexts)

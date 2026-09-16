@@ -68,6 +68,21 @@ class ProviderRegistryTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "multiple providers"):
             registry.select((context(0),))
 
+    def test_registry_rejects_no_supported_provider(self) -> None:
+        registry = ProviderRegistry((StaticMappingProvider({0: "01:00.0"}),))
+        with self.assertRaisesRegex(RuntimeError, "no registered provider"):
+            registry.select((context(1),))
+
+    def test_registry_honors_requested_provider(self) -> None:
+        first = StaticMappingProvider({0: "01:00.0"})
+        second = StaticMappingProvider({0: "02:00.0"})
+        second.name = "second"
+        registry = ProviderRegistry((first, second))
+
+        selected = registry.select((context(0),), requested="second")
+
+        self.assertIs(selected, second)
+
 
 class LinuxContextProviderTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -346,6 +361,21 @@ class GenericAffinityProviderTest(unittest.TestCase):
         result = resolver.resolve_all((context(0),))
         self.assertTrue(result.committable)
         self.assertEqual(result.ordered_results[0].mapping.pci_bdf, "0000:01:00.0")
+
+    def test_generates_fingerprint_for_provider_mapping(self) -> None:
+        resolver = GenericAffinityProvider(
+            StaticMappingProvider({0: "01:00.0"}),
+            sysfs_root=self.root,
+            allowed_cpus=set(range(8)),
+        )
+
+        result = resolver.resolve_all(
+            (DeviceContext(framework="test", logical_device_id=0),)
+        )
+
+        self.assertTrue(result.committable)
+        self.assertIsNotNone(result.visibility_fingerprint)
+        self.assertEqual(len(result.visibility_fingerprint), 64)
 
 
 if __name__ == "__main__":

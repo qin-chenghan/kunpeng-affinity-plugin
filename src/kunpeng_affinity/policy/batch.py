@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from kunpeng_affinity.core.errors import AffinityError, DeviceMappingError
+from kunpeng_affinity.core.identity import mapping_fingerprint
 from kunpeng_affinity.core.models import (
     BatchAffinityResult,
     DeviceContext,
@@ -47,21 +48,19 @@ class GenericAffinityProvider:
                     "VISIBILITY_CHANGED: contexts contain multiple visibility fingerprints",
                 ),
             )
-        fingerprint = next(iter(fingerprints), None)
         try:
-            mappings = tuple(
-                self._canonicalize_mapping(mapping)
-                for mapping in self.mapper.map_all(ordered_contexts)
-            )
-            self._validate_mappings(ordered_contexts, mappings)
+            mappings, fingerprint = self.mapping_snapshot(ordered_contexts)
         except AffinityError as exc:
             return BatchAffinityResult(
                 ordered_results=(),
                 expected_device_count=len(ordered_contexts),
-                visibility_fingerprint=fingerprint,
+                visibility_fingerprint=next(iter(fingerprints), None),
                 committable=False,
                 failure_summary=(f"{exc.code}: {exc}",),
             )
+
+        expected_fingerprint = next(iter(fingerprints), None)
+        result_fingerprint = expected_fingerprint or fingerprint
 
         resolutions: list[DeviceResolution] = []
         failures: list[str] = []
@@ -85,10 +84,22 @@ class GenericAffinityProvider:
         return BatchAffinityResult(
             ordered_results=tuple(resolutions),
             expected_device_count=len(ordered_contexts),
-            visibility_fingerprint=fingerprint,
+            visibility_fingerprint=result_fingerprint,
             committable=committable,
             failure_summary=tuple(failures),
         )
+
+    def mapping_snapshot(
+        self, contexts: Sequence[DeviceContext]
+    ) -> tuple[tuple[DeviceMapping, ...], str]:
+        """Capture and validate one ordered provider visibility snapshot."""
+        ordered_contexts = tuple(contexts)
+        mappings = tuple(
+            self._canonicalize_mapping(mapping)
+            for mapping in self.mapper.map_all(ordered_contexts)
+        )
+        self._validate_mappings(ordered_contexts, mappings)
+        return mappings, mapping_fingerprint(mappings)
 
     @staticmethod
     def _canonicalize_mapping(mapping: DeviceMapping) -> DeviceMapping:
