@@ -53,16 +53,30 @@ def build_vllm_device_contexts(
     *,
     process_kind: str = "worker",
     local_rank: int | None = None,
+    dp_local_rank: int | None = None,
+    allowed_cpus: frozenset[int] | set[int] | None = None,
 ) -> tuple[DeviceContext, ...]:
     """Build one ordered context for every framework-visible device."""
+    count = _device_count(platform)
+    if allowed_cpus is not None:
+        effective_allowed = frozenset(allowed_cpus)
+    else:
+        try:
+            effective_allowed = frozenset(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            # Non-Linux hosts can still build and validate framework-neutral
+            # contexts. Linux resolution paths supply or acquire this value.
+            effective_allowed = frozenset()
     return tuple(
         DeviceContext(
             framework="vllm",
             logical_device_id=device_id,
             process_kind=process_kind,
             local_rank=local_rank,
+            dp_local_rank=dp_local_rank,
+            allowed_cpus=effective_allowed,
         )
-        for device_id in range(_device_count(platform))
+        for device_id in range(count)
     )
 
 
@@ -73,12 +87,16 @@ def resolve_vllm_visibility_fingerprint(
     requested_provider: str | None = None,
     process_kind: str = "worker",
     local_rank: int | None = None,
+    dp_local_rank: int | None = None,
+    allowed_cpus: frozenset[int] | set[int] | None = None,
 ) -> str:
     """Capture the ordered logical-device mapping without topology I/O."""
     contexts = build_vllm_device_contexts(
         platform,
         process_kind=process_kind,
         local_rank=local_rank,
+        dp_local_rank=dp_local_rank,
+        allowed_cpus=allowed_cpus,
     )
     active_registry = registry or create_vllm_provider_registry(platform)
     mapper = active_registry.select(contexts, requested=requested_provider)
@@ -224,12 +242,15 @@ def resolve_vllm_generic_affinity(
     requested_provider: str | None = None,
     process_kind: str = "worker",
     local_rank: int | None = None,
+    dp_local_rank: int | None = None,
 ) -> BatchAffinityResult:
     """Resolve every vLLM-visible device through BDF and Linux sysfs."""
     contexts = build_vllm_device_contexts(
         platform,
         process_kind=process_kind,
         local_rank=local_rank,
+        dp_local_rank=dp_local_rank,
+        allowed_cpus=allowed_cpus,
     )
     active_registry = registry or create_vllm_provider_registry(platform)
     mapper = active_registry.select(contexts, requested=requested_provider)

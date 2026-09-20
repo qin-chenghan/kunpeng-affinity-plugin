@@ -53,6 +53,20 @@ def context(device_id: int, *, fingerprint: str = "visible-a") -> DeviceContext:
     )
 
 
+class DeviceContextTest(unittest.TestCase):
+    def test_allowed_cpus_are_frozen_at_construction(self) -> None:
+        allowed = {1, 2}
+        device = DeviceContext(
+            framework="test",
+            logical_device_id=0,
+            allowed_cpus=allowed,
+        )
+
+        allowed.add(3)
+
+        self.assertEqual(device.allowed_cpus, frozenset({1, 2}))
+
+
 class ProviderRegistryTest(unittest.TestCase):
     def test_static_provider_preserves_context_order(self) -> None:
         provider = StaticMappingProvider({0: "AB:00.0", 1: "AC:00.0"})

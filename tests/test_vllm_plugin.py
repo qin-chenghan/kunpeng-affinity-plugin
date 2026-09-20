@@ -146,13 +146,14 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
         ):
             vllm_plugin.register()
-            with self.numa_utils.configure_subprocess(config, 0):
+            with self.numa_utils.configure_subprocess(config, 0, dp_local_rank=2):
                 pass
 
         self.assertEqual(config.parallel_config.numa_bind_nodes, [3])
-        self.assertEqual(self.calls, [(config, 0, None, "worker")])
+        self.assertEqual(self.calls, [(config, 0, 2, "worker")])
         resolver.assert_called_once()
         self.assertTrue(resolver.call_args.kwargs["force_generic"])
+        self.assertEqual(resolver.call_args.kwargs["dp_local_rank"], 2)
 
     def test_forced_generic_path_preserves_explicit_nodes(self) -> None:
         config = types.SimpleNamespace(
@@ -307,12 +308,14 @@ class VllmPluginTest(unittest.TestCase):
                 self.numa_utils,
                 object(),
                 force_generic=False,
+                dp_local_rank=3,
             )
 
         self.assertEqual(resolution.nodes, (3,))
         self.assertEqual(resolution.source, "generic")
         native.assert_called_once()
         generic.assert_called_once()
+        self.assertEqual(generic.call_args.kwargs["dp_local_rank"], 3)
 
     def test_auto_failure_skips_binding_and_continues(self) -> None:
         config = types.SimpleNamespace(

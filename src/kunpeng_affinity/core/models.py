@@ -19,7 +19,12 @@ class DeviceContext:
     explicit_bdf: str | None = None
     process_kind: str = "worker"
     local_rank: int | None = None
+    dp_local_rank: int | None = None
+    allowed_cpus: frozenset[int] = field(default_factory=frozenset)
     visibility_fingerprint: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "allowed_cpus", frozenset(self.allowed_cpus))
 
 
 @dataclass(frozen=True)

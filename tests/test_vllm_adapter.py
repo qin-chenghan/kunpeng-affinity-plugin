@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import types
 import unittest
@@ -115,11 +116,26 @@ class VllmGenericAdapterTest(unittest.TestCase):
             FakePlatform,
             process_kind="EngineCore",
             local_rank=4,
+            dp_local_rank=2,
+            allowed_cpus={9, 10},
         )
 
         self.assertEqual(len(contexts), 1)
         self.assertEqual(contexts[0].process_kind, "EngineCore")
         self.assertEqual(contexts[0].local_rank, 4)
+        self.assertEqual(contexts[0].dp_local_rank, 2)
+        self.assertEqual(contexts[0].allowed_cpus, frozenset({9, 10}))
+
+    def test_context_builder_marks_unavailable_cpu_affinity_as_unknown(self) -> None:
+        with patch.object(
+            os,
+            "sched_getaffinity",
+            side_effect=AttributeError,
+            create=True,
+        ):
+            contexts = build_vllm_device_contexts(FakePlatform)
+
+        self.assertEqual(contexts[0].allowed_cpus, frozenset())
 
     def test_rejects_invalid_device_count(self) -> None:
         class EmptyPlatform(FakePlatform):

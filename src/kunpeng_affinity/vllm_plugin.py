@@ -105,6 +105,7 @@ def _resolve_generic_nodes(
     requested_provider: str | None,
     process_kind: str,
     local_rank: int | None,
+    dp_local_rank: int | None,
 ) -> _AutomaticAffinityResolution:
     from kunpeng_affinity.adapters import (
         check_vllm_generic_eligibility,
@@ -118,6 +119,7 @@ def _resolve_generic_nodes(
         requested_provider=requested_provider,
         process_kind=process_kind,
         local_rank=local_rank,
+        dp_local_rank=dp_local_rank,
     )
     if batch.visibility_fingerprint is None:
         raise AffinityDiscoveryError(
@@ -141,6 +143,7 @@ def _resolve_automatic_nodes(
     requested_provider: str | None = None,
     process_kind: str = "worker",
     local_rank: int | None = None,
+    dp_local_rank: int | None = None,
 ) -> _AutomaticAffinityResolution:
     """Resolve a complete node list without mutating vLLM configuration."""
     from kunpeng_affinity.adapters import resolve_vllm_visibility_fingerprint
@@ -157,6 +160,7 @@ def _resolve_automatic_nodes(
                 requested_provider=requested_provider,
                 process_kind=process_kind,
                 local_rank=local_rank,
+                dp_local_rank=dp_local_rank,
             )
             return _AutomaticAffinityResolution(
                 nodes=tuple(nodes),
@@ -179,6 +183,7 @@ def _resolve_automatic_nodes(
         requested_provider=requested_provider,
         process_kind=process_kind,
         local_rank=local_rank,
+        dp_local_rank=dp_local_rank,
     )
 
 
@@ -188,6 +193,7 @@ def _revalidate_visibility(
     *,
     process_kind: str,
     local_rank: int | None,
+    dp_local_rank: int | None,
 ) -> None:
     if resolution.visibility_fingerprint is None:
         return
@@ -199,6 +205,7 @@ def _revalidate_visibility(
         requested_provider=resolution.requested_provider,
         process_kind=process_kind,
         local_rank=local_rank,
+        dp_local_rank=dp_local_rank,
     )
     if current != resolution.visibility_fingerprint:
         raise AffinityDiscoveryError(
@@ -237,6 +244,7 @@ def _automatic_affinity_context(
     parallel_config: Any,
     process_kind: str,
     local_rank: int | None,
+    dp_local_rank: int | None,
 ) -> Iterator[None]:
     platform = _current_platform()
     try:
@@ -247,12 +255,14 @@ def _automatic_affinity_context(
             requested_provider=requested_provider,
             process_kind=process_kind,
             local_rank=local_rank,
+            dp_local_rank=dp_local_rank,
         )
         _revalidate_visibility(
             resolution,
             platform,
             process_kind=process_kind,
             local_rank=local_rank,
+            dp_local_rank=dp_local_rank,
         )
         from kunpeng_affinity.adapters.vllm_commit import commit_vllm_nodes
 
@@ -382,6 +392,7 @@ def register() -> None:
                 parallel_config=parallel_config,
                 process_kind=process_kind,
                 local_rank=local_rank,
+                dp_local_rank=dp_local_rank,
             ):
                 yield
             return
