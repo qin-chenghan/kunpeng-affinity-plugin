@@ -32,13 +32,34 @@ preserved while the plugin fills only the missing node list. A successful
 automatic decision is passed to vLLM's original `configure_subprocess` and
 `numactl` execution chain.
 
+Plugin configuration is loaded once during registration. Environment variables
+override an optional UTF-8 JSON file selected with
+`KUNPENG_AFFINITY_CONFIG`; omitted values use the defaults below:
+
+| Setting | Environment variable | Values | Default |
+|---|---|---|---|
+| `mode` | `KUNPENG_AFFINITY_MODE` | `off`, `auto`, `strict` | `auto` |
+| `provider` | `KUNPENG_AFFINITY_PROVIDER` | `auto` or a provider name | `auto` |
+| `cpu_policy` | `KUNPENG_AFFINITY_CPU_POLICY` | `node`, `exact` | `node` |
+| `diagnostic_level` | `KUNPENG_AFFINITY_DIAGNOSTIC_LEVEL` | `error`, `summary`, `detail` | `summary` |
+
+The JSON file accepts the setting names in the first column. Unknown or
+duplicate fields, invalid values, unreadable files, non-UTF-8 input, and a
+non-object JSON root fail registration. Provider-specific JSON schemas remain
+undefined until their runtime contracts are implemented.
+
+The current vLLM adapter supports `cpu_policy=node` and the
+`vllm-platform-pci` provider. It rejects `exact` or an unregistered explicit
+provider before installing the Hook; parsing a stable configuration value does
+not imply that every framework adapter already implements it.
+
 `KUNPENG_AFFINITY_MODE` controls failure behavior:
 
 | Value | Behavior |
 |---|---|
 | `auto` | Default. Try native then generic discovery; if both fail, add no binding and allow startup to continue. |
 | `strict` | Convert a plugin discovery failure into a startup error with a stable error code. |
-| `off` | Disable plugin discovery and preserve vLLM's original behavior. |
+| `off` | Return before importing vLLM or installing a Hook. An environment `off` also skips the optional JSON file. |
 
 Invalid plugin configuration always fails. Framework configuration, device
 index, and binding-executor errors are not treated as discovery failures and

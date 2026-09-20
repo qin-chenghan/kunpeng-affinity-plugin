@@ -8,12 +8,16 @@ import os
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
-from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Iterator
 
+from kunpeng_affinity.config import (
+    CpuPolicy,
+    PluginMode,
+    load_plugin_config,
+    load_plugin_mode,
+)
 from kunpeng_affinity.core.errors import (
-    AffinityConfigurationError,
     AffinityDiscoveryError,
     AffinityIntegrationError,
 )
@@ -29,15 +33,8 @@ _REQUIRED_PARAMETERS = {
 }
 _TARGET_VERSION = "0.23.0"
 _AUXILIARY_DEMO_VERSION = "0.26.0"
-_MODE_ENV = "KUNPENG_AFFINITY_MODE"
 _FORCE_GENERIC_ENV = "KUNPENG_AFFINITY_VLLM_FORCE_GENERIC"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-
-
-class PluginMode(str, Enum):
-    OFF = "off"
-    AUTO = "auto"
-    STRICT = "strict"
 
 
 @dataclass(frozen=True)
@@ -46,6 +43,7 @@ class _AutomaticAffinityResolution:
     source: str
     visibility_fingerprint: str | None
     registry: Any | None
+    requested_provider: str | None = None
 
 
 def _vllm_version() -> str:
@@ -72,17 +70,6 @@ def _numa_bind_enabled(vllm_config: Any) -> Any:
 
 def _force_generic_enabled() -> bool:
     return os.environ.get(_FORCE_GENERIC_ENV, "").strip().lower() in _TRUE_VALUES
-
-
-def _plugin_mode() -> PluginMode:
-    raw_mode = os.environ.get(_MODE_ENV, PluginMode.AUTO.value).strip().lower()
-    try:
-        return PluginMode(raw_mode)
-    except ValueError as exc:
-        raise AffinityConfigurationError(
-            f"invalid {_MODE_ENV}={raw_mode!r}; expected off, auto, or strict",
-            code="PLUGIN_MODE_INVALID",
-        ) from exc
 
 
 def _current_platform() -> Any:
@@ -115,6 +102,7 @@ def _resolve_generic_nodes(
     platform: Any,
     registry: Any,
     *,
+    requested_provider: str | None,
     process_kind: str,
     local_rank: int | None,
 ) -> _AutomaticAffinityResolution:
@@ -127,6 +115,7 @@ def _resolve_generic_nodes(
     batch = resolve_vllm_generic_affinity(
         platform,
         registry=registry,
+        requested_provider=requested_provider,
         process_kind=process_kind,
         local_rank=local_rank,
     )
@@ -140,6 +129,7 @@ def _resolve_generic_nodes(
         source="generic",
         visibility_fingerprint=batch.visibility_fingerprint,
         registry=registry,
+        requested_provider=requested_provider,
     )
 
 
@@ -148,6 +138,7 @@ def _resolve_automatic_nodes(
     platform: Any,
     *,
     force_generic: bool,
+    requested_provider: str | None = None,
     process_kind: str = "worker",
     local_rank: int | None = None,
 ) -> _AutomaticAffinityResolution:
@@ -163,6 +154,7 @@ def _resolve_automatic_nodes(
             fingerprint = resolve_vllm_visibility_fingerprint(
                 platform,
                 registry=registry,
+                requested_provider=requested_provider,
                 process_kind=process_kind,
                 local_rank=local_rank,
             )
@@ -171,6 +163,7 @@ def _resolve_automatic_nodes(
                 source="native",
                 visibility_fingerprint=fingerprint,
                 registry=registry,
+                requested_provider=requested_provider,
             )
         except AffinityDiscoveryError as exc:
             logger.warning(
@@ -183,6 +176,7 @@ def _resolve_automatic_nodes(
         numa_utils,
         platform,
         registry,
+        requested_provider=requested_provider,
         process_kind=process_kind,
         local_rank=local_rank,
     )
@@ -202,6 +196,7 @@ def _revalidate_visibility(
     current = resolve_vllm_visibility_fingerprint(
         platform,
         registry=resolution.registry,
+        requested_provider=resolution.requested_provider,
         process_kind=process_kind,
         local_rank=local_rank,
     )
@@ -236,6 +231,7 @@ def _automatic_affinity_context(
     numa_utils: Any,
     mode: PluginMode,
     force_generic: bool,
+    requested_provider: str | None,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     parallel_config: Any,
@@ -248,6 +244,7 @@ def _automatic_affinity_context(
             numa_utils,
             platform,
             force_generic=force_generic,
+            requested_provider=requested_provider,
             process_kind=process_kind,
             local_rank=local_rank,
         )
@@ -296,13 +293,32 @@ def _automatic_affinity_context(
 
 def register() -> None:
     """Install the vLLM affinity decision Hook in the current process."""
+    mode = load_plugin_mode()
+    if mode is PluginMode.OFF:
+        return
+
+    config = load_plugin_config()
     from vllm.utils import numa_utils
+
+    if config.cpu_policy is CpuPolicy.EXACT:
+        raise AffinityIntegrationError(
+            "vLLM exact CPU policy is not implemented by this adapter",
+            code="CPU_POLICY_UNSUPPORTED",
+        )
+    requested_provider = None if config.provider == "auto" else config.provider
+    if requested_provider is not None:
+        from kunpeng_affinity.providers import VllmPlatformProvider
+
+        if requested_provider != VllmPlatformProvider.name:
+            raise AffinityIntegrationError(
+                f"provider {requested_provider!r} is not registered for vLLM",
+                code="PROVIDER_NOT_FOUND",
+            )
 
     current = numa_utils.configure_subprocess
     if hasattr(current, _HOOK_MARKER):
         return
 
-    mode = _plugin_mode()
     parameters = set(inspect.signature(current).parameters)
     missing = _REQUIRED_PARAMETERS - parameters
     if missing:
@@ -335,6 +351,8 @@ def register() -> None:
         )
         return
 
+    force_generic = _force_generic_enabled()
+
     @contextmanager
     def configure_subprocess_wrapper(*args: Any, **kwargs: Any) -> Iterator[None]:
         vllm_config = _argument(args, kwargs, 0, "vllm_config", None)
@@ -352,15 +370,13 @@ def register() -> None:
             _numa_bind_enabled(vllm_config),
         )
         parallel_config = getattr(vllm_config, "parallel_config", None)
-        force_generic = _force_generic_enabled()
-        if mode is not PluginMode.OFF and _should_resolve(
-            parallel_config, process_kind
-        ):
+        if _should_resolve(parallel_config, process_kind):
             with _automatic_affinity_context(
                 current=current,
                 numa_utils=numa_utils,
                 mode=mode,
                 force_generic=force_generic,
+                requested_provider=requested_provider,
                 args=args,
                 kwargs=kwargs,
                 parallel_config=parallel_config,
@@ -378,5 +394,5 @@ def register() -> None:
         "[kunpeng-affinity] installed vLLM subprocess hook pid=%s vllm=%s mode=%s",
         os.getpid(),
         detected_version,
-        mode.value,
+        config.mode.value,
     )

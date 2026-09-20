@@ -14,7 +14,7 @@ class AffinityError(RuntimeError):
             self.code = code
 
 
-class AffinityConfigurationError(AffinityError):
+class PluginConfigError(AffinityError):
     """Plugin configuration is invalid and cannot be interpreted safely."""
 
 
