@@ -11,6 +11,9 @@ requires-python = ">=3.10"
 [project.entry-points."vllm.general_plugins"]
 kunpeng_affinity = "kunpeng_affinity.vllm_plugin:register"
 
+[project.entry-points."sglang.srt.plugins"]
+kunpeng_affinity = "kunpeng_affinity.sglang_plugin:register"
+
 [project.scripts]
 kunpeng-affinity-topology = "kunpeng_affinity.topology.cli:main"
 

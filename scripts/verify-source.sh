@@ -33,5 +33,17 @@ if expected_root not in source.parents:
 
 print(f"source import: {source}")
 print(f"vLLM entry point: {matches[0].value}")
+
+sglang_matches = [
+    item
+    for item in entry_points(group="sglang.srt.plugins")
+    if item.name == "kunpeng_affinity"
+]
+if len(sglang_matches) != 1:
+    raise SystemExit(
+        "expected exactly one installed sglang.srt.plugins entry point "
+        f"named kunpeng_affinity, found {len(sglang_matches)}"
+    )
+print(f"SGLang entry point: {sglang_matches[0].value}")
 print("source deployment verification passed")
 PY

@@ -187,6 +187,18 @@ class PluginConfigTest(unittest.TestCase):
             {"kunpeng_affinity": "kunpeng_affinity.vllm_plugin:register"},
         )
 
+    def test_sglang_entry_point_metadata_targets_register(self) -> None:
+        if tomllib is None:
+            self.skipTest("tomllib is not available on Python 3.10")
+        metadata = tomllib.loads(
+            (Path(__file__).parents[1] / "pyproject.toml").read_text()
+        )
+        entry_points = metadata["project"]["entry-points"]["sglang.srt.plugins"]
+        self.assertEqual(
+            entry_points,
+            {"kunpeng_affinity": "kunpeng_affinity.sglang_plugin:register"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

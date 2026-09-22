@@ -8,6 +8,11 @@ from kunpeng_affinity.adapters.vllm_generic import (
     resolve_vllm_native_nodes,
     resolve_vllm_visibility_fingerprint,
 )
+from kunpeng_affinity.adapters.sglang_generic import (
+    SglangRuntimeProvider,
+    SglangTorchPlatform,
+    resolve_sglang_numa_node,
+)
 
 __all__ = [
     "build_vllm_device_contexts",
@@ -16,4 +21,7 @@ __all__ = [
     "resolve_vllm_generic_affinity",
     "resolve_vllm_native_nodes",
     "resolve_vllm_visibility_fingerprint",
+    "SglangRuntimeProvider",
+    "SglangTorchPlatform",
+    "resolve_sglang_numa_node",
 ]

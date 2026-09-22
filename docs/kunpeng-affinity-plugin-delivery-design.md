@@ -1203,9 +1203,9 @@ Python 源码包（发布时可选 wheel）
 | native -> generic 回退 | 已实现并验证 Demo | 已实现并单测 `explicit -> native -> generic -> skip/fail`，另保留强制 generic 诊断开关；vLLM 0.26 单 GPU auto-fallback dummy spawn 已验证。 |
 | `numactl` 和实际 affinity | 部分验证 | vLLM 0.26 dummy Worker 已通过原 `numactl` wrapper 验证 CPU 和 memory policy；EngineCore、真实 Worker 生命周期及目标 0.23 仍待验证。 |
 | vLLM `v0.23.0` 完整集成 | 待验证 | 源码契约已确认，运行闭环未完成。 |
-| SGLang 适配 | 后续阶段 | 通用核心可复用，Adapter 尚未实施。 |
+| SGLang 适配 | 已实现 Demo | 已加入 SGLang 0.5.18 的 general-plugin entry point、NUMA 查询 Hook、Torch runtime facade 和 direct-BDF/UUID-BDF 适配；真实服务、多 GPU、Data Parallel 和 Ray 仍待验证。 |
 
-当前源码单元测试共 97 项，覆盖通用拓扑、Provider/批量解析、Registry 无匹配/歧义/显式选择、上下文 BDF、vLLM 平台 BDF 映射、Iluvatar UUID→BDF 映射、稳定 fingerprint 与可见顺序变化、PCI class 候选发现、node 配置事务与回滚、模拟 vLLM Hook、native 校验、generic 回退、三种插件模式、visibility 提交前变化、兼容门控、显式字段保护和框架执行异常传播。提交 `0e8367e` 已在 vLLM 0.26 单 GPU 隔离环境重新验证：真实插件 entry point 被加载；强制 generic 路径确认 native 查询未调用；auto-fallback 路径确认受控 native 查询调用一次并返回无结果后进入 Registry generic；两条路径均经平台 API 映射到 BDF、生成并复核 fingerprint、通过 Linux sysfs 得出节点，并由原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。该结果不替代目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。
+当前源码单元测试共 104 项，覆盖通用拓扑、Provider/批量解析、Registry 无匹配/歧义/显式选择、上下文 BDF、vLLM 平台 BDF 映射、Iluvatar UUID→BDF 映射、SGLang Torch runtime facade、SGLang 显式/native/generic 决策、稳定 fingerprint 与可见顺序变化、PCI class 候选发现、node 配置事务与回滚、模拟 vLLM Hook、native 校验、generic 回退、三种插件模式、visibility 提交前变化、兼容门控、显式字段保护和框架执行异常传播。提交 `0e8367e` 已在 vLLM 0.26 单 GPU 隔离环境重新验证：真实插件 entry point 被加载；强制 generic 路径确认 native 查询未调用；auto-fallback 路径确认受控 native 查询调用一次并返回无结果后进入 Registry generic；两条路径均经平台 API 映射到 BDF、生成并复核 fingerprint、通过 Linux sysfs 得出节点，并由原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。该结果不替代目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。新增 SGLang 测试也只证明源码级契约，不证明真实 SGLang 服务闭环。
 
 ### 21.2 vLLM 自动绑核运行闭环
 

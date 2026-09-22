@@ -17,6 +17,13 @@ and CPU intersection, and can emit JSON. Automatic PCI enumeration is clearly
 reported as candidate discovery rather than logical-GPU mapping. See
 `docs/generic-affinity-probe.md`.
 
+The `demo/probe-iluvatar-provider.sh` command validates the Iluvatar-specific
+identity path in an environment that has vLLM and `ixsmi` available. It prints
+the visible logical device, runtime UUID, physical index, BDF, PCIe path, NUMA
+node, and target CPU intersection. It is read-only and does not start vLLM or
+change affinity. This probe is distinct from the framework-independent probe:
+automatic PCI enumeration cannot prove logical-device identity.
+
 Demo 3 adds the framework-independent identity and batch layer. A
 `DeviceContext` is mapped to a canonical PCI BDF by a `DeviceMapper`, then the
 ordered batch is resolved through the same topology analyzer. Mapping errors,
@@ -97,6 +104,40 @@ The target contract is vLLM 0.23.0. vLLM 0.26.0 has additionally passed both
 forced-generic and automatic-fallback single-device dummy spawn diagnostics,
 but neither version has completed the full compatibility and binding
 validation matrix.
+
+## SGLang plugin behavior
+
+The `sglang.srt.plugins` entry point installs an around hook on
+`sglang.srt.utils.numa_utils.get_numa_node_if_available`. The hook is evaluated
+inside SGLang's existing `configure_subprocess` path, so the original
+`numactl` wrapper remains responsible for process launch and binding. Its
+decision order is:
+
+```text
+explicit server_args.numa_node -> SGLang native query -> generic runtime BDF/NUMA query
+```
+
+The SGLang adapter uses a small Torch runtime facade. If the runtime exposes a
+direct PCI BDF, it is used; otherwise a runtime UUID is joined to the Iluvatar
+`ixsmi` UUID/BDF inventory. The generic Linux topology analyzer then proves the
+NUMA node and CPU intersection. If discovery fails, `auto` returns `None` so
+SGLang's normal fallback behavior continues; `strict` raises from the query
+hook. `SGLANG_AUTO_NUMA_BIND=0` and explicit `server_args.numa_node` are always
+respected.
+
+This first adapter covers SGLang 0.5.18's ordinary Engine subprocess path.
+The Data Parallel controller and Ray actor path have separate launch/binding
+code and remain outside the current validated scope. The adapter is covered by
+fake-runtime contract tests; no real SGLang service is started by the tests.
+
+After source installation, SGLang can restrict discovery to this plugin with:
+
+```bash
+SGLANG_PLUGINS=kunpeng_affinity sglang serve <model-path>
+```
+
+The source-level entry point and fake-runtime tests prove packaging and hook
+semantics, but do not yet prove a real SGLang 0.5.18 multi-GPU lifecycle.
 
 ## Source deployment
 

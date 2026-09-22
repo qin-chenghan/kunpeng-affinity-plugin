@@ -35,6 +35,23 @@ This component does not calculate NUMA locality and does not bind CPUs. After
 it returns an ordered BDF mapping, the existing Linux topology and vLLM
 configuration layers perform those steps.
 
+## Read-only probe
+
+In a runtime environment containing vLLM and `ixsmi`, run:
+
+```bash
+./demo/probe-iluvatar-provider.sh
+```
+
+Use `--json` for machine-readable output, `--device 0` to inspect one visible
+logical device, or `--sysfs-root`/`--ixsmi` to point at test doubles. The command
+prints the UUID join result and then the complete BDF-to-PCIe-to-NUMA-to-CPU
+result. It never calls `sched_setaffinity`, `numactl`, or a model server.
+
+The command returns zero only when every selected device has a bindable Linux
+topology result. A provider or runtime query failure is reported as a failed
+probe rather than silently falling back to PCI directory order.
+
 The current tests use injected `ixsmi` command output and cover UUID prefix
 normalization, visible-device reordering, duplicate identity, missing identity
 and command failure. A real vLLM 0.23+ Iluvatar container still needs an
