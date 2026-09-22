@@ -1194,10 +1194,10 @@ Python 源码包（发布时可选 wheel）
 | CPU 集合求交 | 已实现并测试 | node 结果已接入 vLLM 0.26 dummy Worker 诊断；exact 策略及多进程时机仍待验证。 |
 | 只读 CLI 与主机探测脚本 | 已实现 Demo | `probe-host.sh` 能打印真实 PCI/NUMA/CPU 证据；需固定 JSON schema 和脱敏策略。 |
 | 单级/多级 Switch | fixture 已验证 | 真实硬件待验证。 |
-| Provider SPI | 已实现 Demo | 已有 `DeviceContext`、`DeviceMapping`、`DeviceMapper`、Registry、静态映射 Provider、`LinuxContextProvider` 和 vLLM 平台 Provider；Registry 已进入 vLLM generic 组装路径并支持显式选择，目标 GPU Runtime Provider 仍待实现。 |
+| Provider SPI | 已实现 Demo | 已有 `DeviceContext`、`DeviceMapping`、`DeviceMapper`、Registry、静态映射 Provider、`LinuxContextProvider`、vLLM 平台 Provider 和 Iluvatar Runtime Provider；Registry 已进入 vLLM generic 组装路径并支持直接 BDF 优先、Iluvatar UUID→BDF 回退。 |
 | Linux context BDF Provider | 已实现并测试 | 只接受上下文明确提供的 BDF 或真实 sysfs 设备路径，不代表任意 GPU 运行时映射已经完成。 |
 | vLLM 平台 BDF Provider | 已实现并测试 | 使用 `get_all_gpu_pci_bus_ids()` 与 `device_id_to_physical_device_id()`；假平台覆盖可见设备重排，vLLM 0.26 单 GPU 真实平台已完成 BDF 到 sysfs 接入验证，目标 0.23 和非原生目标平台仍待验证。 |
-| 目标 GPU Provider | 拟实现 | 需结合尚未确定的目标运行时或设备节点契约，将框架 logical device/rank 映射到唯一 BDF。 |
+| 目标 GPU Provider | 已实现原型 | Iluvatar Provider 使用 vLLM `get_device_uuid()` 与只读 `ixsmi` UUID/BDF 清单按 UUID 关联；真实 vLLM 0.23+ 容器、版本差异和多卡生命周期仍待验收。 |
 | 批量事务 | 已实现 Demo | 已实现按输入顺序解析、BDF 再校验、fingerprint 一致性和 all-or-nothing 可提交判定；默认 vLLM Provider 会按有序 logical/physical/BDF 映射生成稳定 fingerprint。 |
 | vLLM 配置提交事务 | 已实现 node 策略 Demo | 已实现锁内同值复用、异值冲突、提交前 visibility 二次复核，以及原执行器进入失败时只回滚插件写入的 nodes；exact CPU 双字段事务和跨 spawn fingerprint 携带仍待实现。 |
 | native -> generic 回退 | 已实现并验证 Demo | 已实现并单测 `explicit -> native -> generic -> skip/fail`，另保留强制 generic 诊断开关；vLLM 0.26 单 GPU auto-fallback dummy spawn 已验证。 |
@@ -1205,7 +1205,7 @@ Python 源码包（发布时可选 wheel）
 | vLLM `v0.23.0` 完整集成 | 待验证 | 源码契约已确认，运行闭环未完成。 |
 | SGLang 适配 | 后续阶段 | 通用核心可复用，Adapter 尚未实施。 |
 
-当前源码单元测试共 72 项，覆盖通用拓扑、Provider/批量解析、Registry 无匹配/歧义/显式选择、上下文 BDF、vLLM 平台 BDF 映射、稳定 fingerprint 与可见顺序变化、PCI class 候选发现、node 配置事务与回滚、模拟 vLLM Hook、native 校验、generic 回退、三种插件模式、visibility 提交前变化、兼容门控、显式字段保护和框架执行异常传播。提交 `0e8367e` 已在 vLLM 0.26 单 GPU 隔离环境重新验证：真实插件 entry point 被加载；强制 generic 路径确认 native 查询未调用；auto-fallback 路径确认受控 native 查询调用一次并返回无结果后进入 Registry generic；两条路径均经平台 API 映射到 BDF、生成并复核 fingerprint、通过 Linux sysfs 得出节点，并由原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。该结果不替代目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。
+当前源码单元测试共 97 项，覆盖通用拓扑、Provider/批量解析、Registry 无匹配/歧义/显式选择、上下文 BDF、vLLM 平台 BDF 映射、Iluvatar UUID→BDF 映射、稳定 fingerprint 与可见顺序变化、PCI class 候选发现、node 配置事务与回滚、模拟 vLLM Hook、native 校验、generic 回退、三种插件模式、visibility 提交前变化、兼容门控、显式字段保护和框架执行异常传播。提交 `0e8367e` 已在 vLLM 0.26 单 GPU 隔离环境重新验证：真实插件 entry point 被加载；强制 generic 路径确认 native 查询未调用；auto-fallback 路径确认受控 native 查询调用一次并返回无结果后进入 Registry generic；两条路径均经平台 API 映射到 BDF、生成并复核 fingerprint、通过 Linux sysfs 得出节点，并由原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。该结果不替代目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。
 
 ### 21.2 vLLM 自动绑核运行闭环
 
@@ -1217,7 +1217,7 @@ Python 源码包（发布时可选 wheel）
 | 2 | 拦截 Worker 子进程初始化入口 | 已实现 Demo | 已安装版本/签名受控、幂等且保持 context manager 语义的包装器；自动或诊断结果成功后均调用原函数。 |
 | 3 | 提取 rank、逻辑设备和进程上下文 | 部分完成 | 已观察框架配置、rank、进程类型和版本，按平台可见设备数构造有序 `DeviceContext`，并从实际映射生成 visibility fingerprint；TP/DP、多 GPU、跨 spawn fingerprint 携带尚未完成运行验证。 |
 | 4 | 识别并保护用户显式配置 | 已实现 Demo | 仅在 `numa_bind=True` 且节点缺失时运行；显式节点直接委托，显式 CPU 在补齐节点时保持不变，关闭状态不查询。配置模型的全部组合仍需目标版本契约测试。 |
-| 5 | 逻辑 GPU 映射为可信 PCI BDF | 部分完成 | vLLM 平台 Provider 已在 0.26 单 GPU 真实进程完成 logical device -> physical ID -> BDF 验证；非原生目标平台仍需要其 Runtime Provider 契约，多 GPU 可见顺序仍待真实验证。 |
+| 5 | 逻辑 GPU 映射为可信 PCI BDF | 部分完成 | vLLM 平台 Provider 已在 0.26 单 GPU 真实进程完成 logical device -> physical ID -> BDF 验证；Iluvatar Provider 已完成 UUID→BDF 原型和重排单测；真实 vLLM 0.23+ Iluvatar Runtime、多 GPU和完整生命周期仍待验证。 |
 | 6 | 根据 BDF 检测 PCIe/NUMA 拓扑 | 已实现 | 已支持 BDF 规范化、真实 sysfs 父链、Endpoint/祖先 NUMA 证据、直连及任意层级 Switch；fixture 已覆盖，另有真实 Linux 主机成功报告。 |
 | 7 | 计算当前进程可用目标 CPU 集合 | 已实现 | 已实现 `node CPUs ∩ online CPUs ∩ sched_getaffinity(0)`，并处理证据冲突、未知 NUMA 和空交集。 |
 | 8 | 按优先级选择显式、原生或通用结果 | 已实现并验证 Demo | 已实现 native 完整结果校验、Registry generic 回退、`auto` 失败直接 yield、`strict` 稳定错误码和绝对 `off`；node 写入具备锁、visibility 二次复核和进入失败回滚。模拟契约测试和提交 `0e8367e` 的 vLLM 0.26 单 GPU forced-generic/auto-fallback dummy spawn 均已通过。 |
@@ -1227,13 +1227,13 @@ Python 源码包（发布时可选 wheel）
 
 ### 21.3 当前阶段结论
 
-当前可以确认的是：插件已经实现 `explicit -> native -> Registry generic -> skip/fail` 状态机；generic 结果包含有序设备映射 fingerprint，提交前会重新采样，node 配置使用带锁事务并在原执行器进入失败时回滚。提交 `0e8367e` 已在 vLLM 0.26 受控环境完成 logical device 经 BDF、Linux sysfs 到 dummy Worker 实际绑定的回归闭环。下一验证入口是跨 spawn fingerprint 契约、目标 0.23 契约与 spawn、EngineCore 和完整服务生命周期。目标非原生 GPU 仍需明确 Runtime Provider 契约；当前结果不能外推为多 GPU、真实 PCIe Switch 或生产服务验收。
+当前可以确认的是：插件已经实现 `explicit -> native -> Registry generic -> skip/fail` 状态机；generic 结果包含有序设备映射 fingerprint，提交前会重新采样，node 配置使用带锁事务并在原执行器进入失败时回滚；Iluvatar UUID→BDF Provider 原型已加入直接 BDF 不可用时的 vLLM 组装路径。提交 `0e8367e` 已在 vLLM 0.26 受控环境完成 logical device 经 BDF、Linux sysfs 到 dummy Worker 实际绑定的回归闭环。下一验证入口是目标 vLLM 0.23+ Iluvatar Runtime、跨 spawn fingerprint 契约、EngineCore 和完整服务生命周期。当前结果不能外推为多 GPU、真实 PCIe Switch 或生产服务验收。
 
 ## 22. 待决策事项
 
 继续完成正式交付前需要由项目确认：
 
-1. 第一批目标 GPU Provider 的运行时身份接口或设备节点契约；
+1. Iluvatar Provider 在目标 vLLM 0.23+ 容器中的真实运行结果，以及其他目标 GPU Provider 的运行时身份接口或设备节点契约；
 2. `cpu_policy=exact` 是否作为首版稳定能力；
 3. 配置文件格式及 Provider 外部扩展是否使用独立 entry point；
 4. 首版支持的 vLLM 执行后端范围；
