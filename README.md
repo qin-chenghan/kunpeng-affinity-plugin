@@ -10,6 +10,13 @@ analyzer. Given a trusted PCI BDF, it follows the real sysfs parent path,
 resolves NUMA evidence, and suggests the intersection of NUMA-node, online, and
 currently allowed CPUs. It does not import vLLM/SGLang or execute a binding.
 
+The `demo/` directory contains a portable generic probe for running the same
+flow on another Linux machine before framework integration. It accepts trusted
+BDFs or reports PCI accelerator candidates, prints the PCIe path, NUMA evidence,
+and CPU intersection, and can emit JSON. Automatic PCI enumeration is clearly
+reported as candidate discovery rather than logical-GPU mapping. See
+`docs/generic-affinity-probe.md`.
+
 Demo 3 adds the framework-independent identity and batch layer. A
 `DeviceContext` is mapped to a canonical PCI BDF by a `DeviceMapper`, then the
 ordered batch is resolved through the same topology analyzer. Mapping errors,
