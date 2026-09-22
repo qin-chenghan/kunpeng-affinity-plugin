@@ -56,9 +56,12 @@ non-object JSON root fail registration. Provider-specific JSON schemas remain
 undefined until their runtime contracts are implemented.
 
 The current vLLM adapter supports `cpu_policy=node` and the
-`vllm-platform-pci` provider. It rejects `exact` or an unregistered explicit
-provider before installing the Hook; parsing a stable configuration value does
-not imply that every framework adapter already implements it.
+`vllm-platform-pci` provider. When vLLM does not expose a usable direct BDF
+mapping, it can use `iluvatar-runtime-pci`, which joins the vLLM logical-device
+UUID to the read-only Iluvatar `ixsmi` UUID/BDF inventory. It rejects `exact`
+or an unregistered explicit provider before installing the Hook; parsing a
+stable configuration value does not imply that every framework adapter already
+implements it.
 
 `KUNPENG_AFFINITY_MODE` controls failure behavior:
 

@@ -21,12 +21,19 @@ execute `numactl`, or change process affinity. The concrete mappers are:
 - `VllmPlatformProvider`: consumes the vLLM 0.23 platform methods
   `get_all_gpu_pci_bus_ids()` and `device_id_to_physical_device_id()`; it is
   loaded by an adapter and does not import vLLM in the framework-neutral core.
+- `IluvatarRuntimeProvider`: consumes vLLM `get_device_uuid()` and the
+  read-only `ixsmi --query-gpu=index,uuid,pci.bus_id` inventory when a direct
+  platform BDF method is unavailable. It joins by normalized UUID, never by
+  `ixsmi` enumeration order.
 
 `LinuxContextProvider` does not infer identity from logical IDs, sysfs ordering,
 bus numbers, names, or device model. A target GPU runtime provider is still
 required when the target framework or hardware exposes none of these trusted
 facts. The vLLM provider is not a replacement for a target provider on
 framework platforms that do not implement these APIs.
+
+The Iluvatar implementation details and its remaining real-runtime validation
+boundary are documented in `docs/iluvatar-runtime-provider.md`.
 
 ## Mapping contract
 

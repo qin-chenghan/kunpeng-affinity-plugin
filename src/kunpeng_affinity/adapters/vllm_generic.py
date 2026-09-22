@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from kunpeng_affinity.core.errors import AffinityDiscoveryError
 from kunpeng_affinity.core.models import BatchAffinityResult, DeviceContext
 from kunpeng_affinity.policy import GenericAffinityProvider
-from kunpeng_affinity.providers import ProviderRegistry, VllmPlatformProvider
+from kunpeng_affinity.providers import (
+    IluvatarRuntimeProvider,
+    ProviderRegistry,
+    VllmPlatformProvider,
+)
 from kunpeng_affinity.topology.cpulist import CpuListError, parse_cpulist
 
 
@@ -41,11 +45,27 @@ def create_vllm_provider_registry(
     platform: Any,
     *,
     providers: Sequence[Any] = (),
+    requested_provider: str | None = None,
 ) -> ProviderRegistry:
-    """Build the provider set used by the vLLM generic path."""
+    """Build providers, preferring direct platform BDF over runtime fallback."""
     registry = ProviderRegistry(providers)
     registry.register(VllmPlatformProvider(platform))
+    if requested_provider == IluvatarRuntimeProvider.name or not _has_direct_bdf(
+        platform
+    ):
+        registry.register(IluvatarRuntimeProvider(platform))
     return registry
+
+
+def _has_direct_bdf(platform: Any) -> bool:
+    method = getattr(platform, "get_all_gpu_pci_bus_ids", None)
+    if not callable(method):
+        return False
+    try:
+        result = method()
+    except (NotImplementedError, RuntimeError, OSError, ValueError):
+        return False
+    return isinstance(result, Mapping) and bool(result)
 
 
 def build_vllm_device_contexts(

@@ -78,10 +78,12 @@ def _current_platform() -> Any:
     return current_platform
 
 
-def _provider_registry(platform: Any) -> Any:
+def _provider_registry(platform: Any, requested_provider: str | None = None) -> Any:
     from kunpeng_affinity.adapters import create_vllm_provider_registry
 
-    return create_vllm_provider_registry(platform)
+    return create_vllm_provider_registry(
+        platform, requested_provider=requested_provider
+    )
 
 
 def _nodes_from_generic_batch(batch: Any) -> list[int]:
@@ -148,7 +150,7 @@ def _resolve_automatic_nodes(
     """Resolve a complete node list without mutating vLLM configuration."""
     from kunpeng_affinity.adapters import resolve_vllm_visibility_fingerprint
 
-    registry = _provider_registry(platform)
+    registry = _provider_registry(platform, requested_provider)
     if not force_generic:
         from kunpeng_affinity.adapters import resolve_vllm_native_nodes
 
@@ -317,9 +319,15 @@ def register() -> None:
         )
     requested_provider = None if config.provider == "auto" else config.provider
     if requested_provider is not None:
-        from kunpeng_affinity.providers import VllmPlatformProvider
+        from kunpeng_affinity.providers import (
+            IluvatarRuntimeProvider,
+            VllmPlatformProvider,
+        )
 
-        if requested_provider != VllmPlatformProvider.name:
+        if requested_provider not in {
+            VllmPlatformProvider.name,
+            IluvatarRuntimeProvider.name,
+        }:
             raise AffinityIntegrationError(
                 f"provider {requested_provider!r} is not registered for vLLM",
                 code="PROVIDER_NOT_FOUND",
