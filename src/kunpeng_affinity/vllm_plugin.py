@@ -109,12 +109,15 @@ def _resolve_generic_nodes(
     local_rank: int | None,
     dp_local_rank: int | None,
 ) -> _AutomaticAffinityResolution:
+    # Check the host and process prerequisites before reading device topology.
     from kunpeng_affinity.adapters import (
         check_vllm_generic_eligibility,
         resolve_vllm_generic_affinity,
     )
 
     check_vllm_generic_eligibility(numa_utils)
+
+    # Resolve every visible device as one batch so a partial result cannot be used.
     batch = resolve_vllm_generic_affinity(
         platform,
         registry=registry,
@@ -150,10 +153,12 @@ def _resolve_automatic_nodes(
     """Resolve a complete node list without mutating vLLM configuration."""
     from kunpeng_affinity.adapters import resolve_vllm_visibility_fingerprint
 
+    # Keep one provider registry for mapping and the later visibility recheck.
     registry = _provider_registry(platform, requested_provider)
     if not force_generic:
         from kunpeng_affinity.adapters import resolve_vllm_native_nodes
 
+        # A valid framework-native result has priority over the Linux fallback.
         try:
             nodes = resolve_vllm_native_nodes(numa_utils, platform)
             fingerprint = resolve_vllm_visibility_fingerprint(
@@ -178,6 +183,8 @@ def _resolve_automatic_nodes(
                 exc.code,
                 exc,
             )
+
+    # Native discovery was unavailable or explicitly bypassed; use the generic path.
     return _resolve_generic_nodes(
         numa_utils,
         platform,
@@ -250,6 +257,7 @@ def _automatic_affinity_context(
 ) -> Iterator[None]:
     platform = _current_platform()
     try:
+        # Resolve the complete NUMA result without changing framework state yet.
         resolution = _resolve_automatic_nodes(
             numa_utils,
             platform,
@@ -259,6 +267,8 @@ def _automatic_affinity_context(
             local_rank=local_rank,
             dp_local_rank=dp_local_rank,
         )
+
+        # Ensure the device-to-BDF view did not change during topology analysis.
         _revalidate_visibility(
             resolution,
             platform,
@@ -268,8 +278,10 @@ def _automatic_affinity_context(
         )
         from kunpeng_affinity.adapters.vllm_commit import commit_vllm_nodes
 
+        # Commit only after the complete result and its visibility are validated.
         commit = commit_vllm_nodes(parallel_config, list(resolution.nodes))
     except AffinityDiscoveryError as exc:
+        # Discovery failures are recoverable in auto mode and fatal in strict mode.
         if force_generic or mode is PluginMode.STRICT:
             raise _strict_failure(exc) from exc
         logger.warning(
@@ -288,6 +300,7 @@ def _automatic_affinity_context(
         "; native GPU NUMA query bypassed" if force_generic else "",
     )
     try:
+        # The original vLLM context still owns process creation and numactl setup.
         manager = current(*args, **kwargs)
         manager.__enter__()
     except BaseException:
@@ -305,6 +318,7 @@ def _automatic_affinity_context(
 
 def register() -> None:
     """Install the vLLM affinity decision Hook in the current process."""
+    # Resolve plugin policy before importing framework or hardware-specific code.
     mode = load_plugin_mode()
     if mode is PluginMode.OFF:
         return
@@ -312,6 +326,7 @@ def register() -> None:
     config = load_plugin_config()
     from vllm.utils import numa_utils
 
+    # Reject configuration options that this adapter cannot preserve safely.
     if config.cpu_policy is CpuPolicy.EXACT:
         raise AffinityIntegrationError(
             "vLLM exact CPU policy is not implemented by this adapter",
@@ -333,6 +348,7 @@ def register() -> None:
                 code="PROVIDER_NOT_FOUND",
             )
 
+    # Validate the original context-manager contract before replacing it.
     current = numa_utils.configure_subprocess
     if hasattr(current, _HOOK_MARKER):
         return
@@ -373,6 +389,7 @@ def register() -> None:
 
     @contextmanager
     def configure_subprocess_wrapper(*args: Any, **kwargs: Any) -> Iterator[None]:
+        # Capture framework rank and process metadata at the subprocess boundary.
         vllm_config = _argument(args, kwargs, 0, "vllm_config", None)
         local_rank = _argument(args, kwargs, 1, "local_rank", None)
         dp_local_rank = _argument(args, kwargs, 2, "dp_local_rank", None)
@@ -389,6 +406,7 @@ def register() -> None:
         )
         parallel_config = getattr(vllm_config, "parallel_config", None)
         if _should_resolve(parallel_config, process_kind):
+            # Automatic discovery is limited to eligible worker-like processes.
             with _automatic_affinity_context(
                 current=current,
                 numa_utils=numa_utils,
@@ -404,6 +422,8 @@ def register() -> None:
             ):
                 yield
             return
+
+        # All other calls retain the original vLLM behavior unchanged.
         with current(*args, **kwargs):
             yield
 

@@ -137,10 +137,12 @@ class IluvatarRuntimeProvider:
         return ProbeResult(provider=self.name, supported=True)
 
     def map_all(self, contexts: Sequence[DeviceContext]) -> tuple[DeviceMapping, ...]:
+        # Query the host-wide inventory once, then join each visible device by UUID.
         uuid_to_row = self._inventory()
         mappings: list[DeviceMapping] = []
         seen_bdfs: set[str] = set()
         for context in contexts:
+            # Runtime UUID follows visibility remapping; physical index order does not.
             gpu_uuid = self._device_uuid(context.logical_device_id)
             try:
                 physical_id, normalized_uuid, bdf = uuid_to_row[gpu_uuid]
@@ -187,6 +189,7 @@ class IluvatarRuntimeProvider:
             ) from exc
 
     def _inventory(self) -> dict[str, tuple[int, str, str]]:
+        # ixsmi is used only as a read-only UUID-to-BDF inventory source.
         try:
             completed = self._command_runner(
                 [

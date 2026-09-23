@@ -22,6 +22,7 @@ def _env_bool(name: str, default: bool = True) -> bool:
 
 
 def _generic_node(gpu_id: int, provider: str) -> int:
+    # Resolve one visible SGLang GPU through the shared runtime and Linux path.
     if provider not in {"auto", "sglang-runtime-pci", "iluvatar-runtime-pci"}:
         raise AffinityDiscoveryError(
             f"provider {provider!r} is not registered for SGLang",
@@ -34,15 +35,18 @@ def _generic_node(gpu_id: int, provider: str) -> int:
 
 def _around_numa_query(original: Any, server_args: Any, gpu_id: int, *, mode: PluginMode, provider: str) -> int | None:
     """Keep explicit/native SGLang results and add only a fallback."""
+    # Preserve an explicit node list and SGLang's own disabled behavior.
     if getattr(server_args, "numa_node", None) is not None:
         return original(server_args, gpu_id)
     if not _env_bool("SGLANG_AUTO_NUMA_BIND"):
         return original(server_args, gpu_id)
 
+    # Let the framework-native query decide before using the generic fallback.
     native = original(server_args, gpu_id)
     if native is not None:
         return native
     try:
+        # The fallback returns a node only after identity and Linux topology pass.
         node = _generic_node(gpu_id, provider)
     except Exception as exc:
         if mode is PluginMode.STRICT:
@@ -63,6 +67,7 @@ def _around_numa_query(original: Any, server_args: Any, gpu_id: int, *, mode: Pl
 
 def register() -> None:
     """Register the SGLang NUMA-query fallback through its plugin SPI."""
+    # Read policy before installing a hook; off mode has no framework side effects.
     mode = load_plugin_mode()
     if mode is PluginMode.OFF:
         return
@@ -83,6 +88,8 @@ def register() -> None:
             provider=config.provider,
         )
 
+    # The hook changes only NUMA-node selection; SGLang keeps process launching
+    # and the actual numactl operation in its original implementation.
     HookRegistry.register(target, hook, HookType.AROUND)
     setattr(register, _HOOK_MARKER, True)
     logger.warning(

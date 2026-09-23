@@ -48,6 +48,8 @@ def create_vllm_provider_registry(
     requested_provider: str | None = None,
 ) -> ProviderRegistry:
     """Build providers, preferring direct platform BDF over runtime fallback."""
+    # Register the framework-native mapper first, then add the runtime mapper
+    # only when a direct platform BDF mapping is unavailable or explicitly asked for.
     registry = ProviderRegistry(providers)
     registry.register(VllmPlatformProvider(platform))
     if requested_provider == IluvatarRuntimeProvider.name or not _has_direct_bdf(
@@ -77,6 +79,8 @@ def build_vllm_device_contexts(
     allowed_cpus: frozenset[int] | set[int] | None = None,
 ) -> tuple[DeviceContext, ...]:
     """Build one ordered context for every framework-visible device."""
+    # Device IDs here are framework-visible IDs; Providers establish their
+    # physical identity without relying on host PCI enumeration order.
     count = _device_count(platform)
     if allowed_cpus is not None:
         effective_allowed = frozenset(allowed_cpus)
@@ -111,6 +115,7 @@ def resolve_vllm_visibility_fingerprint(
     allowed_cpus: frozenset[int] | set[int] | None = None,
 ) -> str:
     """Capture the ordered logical-device mapping without topology I/O."""
+    # The fingerprint records the mapping that topology analysis is about to use.
     contexts = build_vllm_device_contexts(
         platform,
         process_kind=process_kind,
@@ -131,6 +136,8 @@ def check_vllm_generic_eligibility(
     allowed_cpus: frozenset[int] | set[int] | None = None,
 ) -> None:
     """Apply vLLM's vendor-neutral automatic-binding safety gates."""
+    # Refuse generic binding when the host, current CPU mask, memory policy,
+    # or binding executable cannot support the operation safely.
     root = Path(sysfs_root)
     if not (root / "devices/system/node/node1").is_dir():
         raise AffinityDiscoveryError(
@@ -172,6 +179,8 @@ def resolve_vllm_native_nodes(
     allowed_cpus: frozenset[int] | set[int] | None = None,
 ) -> list[int]:
     """Call and validate vLLM's native GPU-to-NUMA query as a full batch."""
+    # Treat the native result as a complete device-ordered list, not as a
+    # per-device best effort result.
     query = getattr(numa_utils, "get_auto_numa_nodes", None)
     if not callable(query):
         raise AffinityDiscoveryError(
@@ -265,6 +274,8 @@ def resolve_vllm_generic_affinity(
     dp_local_rank: int | None = None,
 ) -> BatchAffinityResult:
     """Resolve every vLLM-visible device through BDF and Linux sysfs."""
+    # Build contexts, select one complete Provider mapping, and run the shared
+    # batch resolver. No framework configuration is mutated in this function.
     contexts = build_vllm_device_contexts(
         platform,
         process_kind=process_kind,

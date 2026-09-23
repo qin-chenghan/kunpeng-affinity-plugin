@@ -33,6 +33,7 @@ class GenericAffinityProvider:
 
     def resolve_all(self, contexts: Sequence[DeviceContext]) -> BatchAffinityResult:
         ordered_contexts = tuple(contexts)
+        # Reject contexts that already disagree about the visible device set.
         fingerprints = {
             context.visibility_fingerprint
             for context in ordered_contexts
@@ -49,6 +50,7 @@ class GenericAffinityProvider:
                 ),
             )
         try:
+            # Obtain and validate one ordered mapping before touching sysfs.
             mappings, fingerprint = self.mapping_snapshot(ordered_contexts)
         except AffinityError as exc:
             return BatchAffinityResult(
@@ -64,6 +66,8 @@ class GenericAffinityProvider:
 
         resolutions: list[DeviceResolution] = []
         failures: list[str] = []
+
+        # Analyze each mapped BDF, but commit nothing until every device succeeds.
         for context, mapping in zip(ordered_contexts, mappings, strict=True):
             affinity = analyze_bdf(
                 mapping.pci_bdf,
@@ -80,6 +84,7 @@ class GenericAffinityProvider:
                     f"topology result is {affinity.status.value}"
                 )
 
+        # A single failed or incomplete device invalidates the entire batch.
         committable = len(resolutions) == len(ordered_contexts) and not failures
         return BatchAffinityResult(
             ordered_results=tuple(resolutions),
@@ -93,6 +98,7 @@ class GenericAffinityProvider:
         self, contexts: Sequence[DeviceContext]
     ) -> tuple[tuple[DeviceMapping, ...], str]:
         """Capture and validate one ordered provider visibility snapshot."""
+        # Canonicalize and validate the provider output before generating its digest.
         ordered_contexts = tuple(contexts)
         mappings = tuple(
             self._canonicalize_mapping(mapping)

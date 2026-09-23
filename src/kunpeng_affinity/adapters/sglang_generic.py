@@ -101,6 +101,7 @@ class SglangRuntimeProvider:
         return ProbeResult(provider=self.name, supported=True)
 
     def map_all(self, contexts: Sequence[DeviceContext]) -> tuple[DeviceMapping, ...]:
+        # Prefer a complete direct runtime BDF mapping when the runtime exposes it.
         direct = tuple(self.platform.get_device_bdf(c.logical_device_id) for c in contexts)
         if all(bdf is not None for bdf in direct):
             return tuple(
@@ -117,6 +118,7 @@ class SglangRuntimeProvider:
                 "SGLang runtime returned only a partial direct BDF mapping",
                 code="DEVICE_MAPPING_PARTIAL",
             )
+        # A complete direct mapping is required; otherwise use UUID-to-BDF evidence.
         provider = IluvatarRuntimeProvider(
             self.platform,
             ixsmi=self.ixsmi,
@@ -144,6 +146,8 @@ def resolve_sglang_numa_node(
     ixsmi: str = "ixsmi",
 ) -> int:
     """Resolve one SGLang GPU id to a proven Linux NUMA node."""
+    # Reuse the shared batch resolver so SGLang and vLLM apply the same
+    # mapping validation and topology rules.
     if torch_module is None:
         import torch
 

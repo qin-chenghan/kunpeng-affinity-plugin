@@ -95,6 +95,8 @@ def _role(index: int, pci_class: str | None) -> str:
 
 
 def _collect_path(sysfs_root: Path, bdf: str) -> _PathData:
+    # Follow the real sysfs links from the endpoint through every PCI ancestor.
+    # The traversal naturally covers direct connections and any switch depth.
     device_link = sysfs_root / "bus/pci/devices" / bdf
     try:
         endpoint = device_link.resolve(strict=True)
@@ -160,6 +162,8 @@ def _collect_path(sysfs_root: Path, bdf: str) -> _PathData:
 
 
 def _node_inventory(sysfs_root: Path) -> dict[int, frozenset[int]]:
+    # Build the NUMA-node CPU inventory used by both evidence resolution and
+    # the final process-allowed CPU intersection.
     node_root = sysfs_root / "devices/system/node"
     inventory: dict[int, frozenset[int]] = {}
     try:
@@ -180,6 +184,8 @@ def _resolve_numa(
     path_data: _PathData,
     inventory: dict[int, frozenset[int]],
 ) -> tuple[int | None, str | None, tuple[str, ...]]:
+    # Combine endpoint, PCI ancestor, and local_cpulist evidence. Conflicting
+    # evidence is rejected instead of being resolved by an arbitrary preference.
     candidates: list[tuple[int, str]] = []
     diagnostics: list[str] = []
     for index, path_node in enumerate(path_data.nodes):
@@ -293,6 +299,7 @@ def analyze_bdf(
     online_cpus: frozenset[int] = frozenset()
     effective_allowed: frozenset[int] = frozenset()
     try:
+        # Resolve the PCI path and prove a unique NUMA node before reading CPU sets.
         normalized = normalize_bdf(bdf)
         path_data = _collect_path(root, normalized)
         inventory = _node_inventory(root)
@@ -308,6 +315,7 @@ def analyze_bdf(
                 + ("NUMA node could not be proven from PCI sysfs",),
             )
 
+        # Restrict the suggested CPUs to CPUs that are online and allowed here.
         node_cpus = inventory[numa_node]
         if not node_cpus:
             raise TopologyError(f"NUMA node {numa_node} has an empty CPU list")
