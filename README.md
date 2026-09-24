@@ -70,6 +70,11 @@ or an unregistered explicit provider before installing the Hook; parsing a
 stable configuration value does not imply that every framework adapter already
 implements it.
 
+The Iluvatar Provider executes `ixsmi` by default. Set
+`KUNPENG_AFFINITY_IXSMI` to an executable path when the utility is mounted at a
+nonstandard location. The staged validation runner resolves `IXSMI_BIN` once
+and passes that path to both Provider probes and controlled vLLM spawn checks.
+
 `KUNPENG_AFFINITY_MODE` controls failure behavior:
 
 | Value | Behavior |

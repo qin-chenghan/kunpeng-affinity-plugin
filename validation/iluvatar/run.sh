@@ -291,6 +291,7 @@ stage_forced_generic_spawn() {
     env \
       KUNPENG_AFFINITY_MODE="$KUNPENG_AFFINITY_MODE" \
       KUNPENG_AFFINITY_PROVIDER="$KUNPENG_AFFINITY_PROVIDER" \
+      KUNPENG_AFFINITY_IXSMI="$ixsmi_bin" \
       KUNPENG_AFFINITY_CPU_POLICY="$KUNPENG_AFFINITY_CPU_POLICY" \
       KUNPENG_AFFINITY_DIAGNOSTIC_LEVEL="$KUNPENG_AFFINITY_DIAGNOSTIC_LEVEL" \
       KUNPENG_AFFINITY_VLLM_FORCE_GENERIC="$KUNPENG_AFFINITY_VLLM_FORCE_GENERIC" \
@@ -305,6 +306,7 @@ stage_auto_fallback_spawn() {
     env \
       KUNPENG_AFFINITY_MODE="$KUNPENG_AFFINITY_MODE" \
       KUNPENG_AFFINITY_PROVIDER="$KUNPENG_AFFINITY_PROVIDER" \
+      KUNPENG_AFFINITY_IXSMI="$ixsmi_bin" \
       KUNPENG_AFFINITY_CPU_POLICY="$KUNPENG_AFFINITY_CPU_POLICY" \
       KUNPENG_AFFINITY_DIAGNOSTIC_LEVEL="$KUNPENG_AFFINITY_DIAGNOSTIC_LEVEL" \
       VLLM_WORKER_MULTIPROC_METHOD="$VLLM_WORKER_MULTIPROC_METHOD" \
@@ -348,8 +350,12 @@ fi
 
 visible_count=0
 if ((!dry_run)) && is_enabled "$RUN_REORDER_PROBE"; then
-  visible_count="$("$python_bin" -c 'from vllm.platforms import current_platform; print(current_platform.device_count())')" || {
+  visible_count="$("$python_bin" -c 'from vllm.platforms import current_platform; print(f"KUNPENG_VISIBLE_DEVICE_COUNT={current_platform.device_count()}")' 2>/dev/null | awk -F= '/^KUNPENG_VISIBLE_DEVICE_COUNT=[0-9]+$/ { value=$2 } END { if (value == "") exit 1; print value }')" || {
     echo "cannot determine visible device count for reorder validation" >&2
+    exit 2
+  }
+  [[ "$visible_count" =~ ^[0-9]+$ ]] || {
+    echo "vLLM returned a non-numeric visible device count: $visible_count" >&2
     exit 2
   }
 fi

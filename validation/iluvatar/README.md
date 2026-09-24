@@ -51,7 +51,7 @@ and comments. Boolean stage settings accept `1/0`, `true/false`, `yes/no`, or
 | Setting | Default | Meaning |
 |---|---|---|
 | `PYTHON_BIN` | `python3` | Interpreter from the target vLLM environment. |
-| `IXSMI_BIN` | `ixsmi` | Iluvatar inventory command used by the Provider probe. |
+| `IXSMI_BIN` | `ixsmi` | Iluvatar inventory command used by Provider probes and exported as `KUNPENG_AFFINITY_IXSMI` during controlled vLLM spawn checks. |
 | `SYSFS_ROOT` | `/sys` | Linux sysfs root used for PCIe and NUMA analysis. |
 | `PROBE_DEVICE` | `0` | Logical device used by the first single-device probe. |
 | `VISIBILITY_ENV` | `CUDA_VISIBLE_DEVICES` | Visibility variable; may also be `ILUVATAR_VISIBLE_DEVICES`. |
@@ -76,7 +76,8 @@ and comments. Boolean stage settings accept `1/0`, `true/false`, `yes/no`, or
 `RUN_REORDER_PROBE`, `RUN_SOURCE_INSTALL`, `RUN_FORCED_GENERIC_SPAWN`, and
 `RUN_AUTO_FALLBACK_SPAWN` enable their corresponding stages. They default to
 `1`. The reorder stage is skipped automatically when fewer than two devices
-are visible.
+are visible. vLLM startup logs are ignored while reading the device count; the
+runner requires an explicit numeric marker from the platform query.
 
 On a heterogeneous host, set `AFFINITY_BDFS` to the target GPU BDFs reported
 by the Runtime inventory. If it is empty, the topology stage scans all display

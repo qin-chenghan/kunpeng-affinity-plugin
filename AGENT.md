@@ -198,8 +198,10 @@ The all-device result must be checked as a batch:
 - every topology result is bindable;
 - no partial result is treated as successful.
 
-If at least two devices are visible, run the reorder check using the variable
-confirmed in the environment report:
+If at least two devices are visible, the one-command suite should run the
+reorder check. The runner uses a marker-based numeric capture so vLLM startup
+logs on stdout cannot make a four-device result look like fewer than two. The
+manual equivalent is:
 
 ```bash
 CUDA_VISIBLE_DEVICES=1,0 \

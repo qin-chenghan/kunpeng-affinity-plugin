@@ -10,6 +10,7 @@ from unittest.mock import patch
 from kunpeng_affinity.adapters import (
     build_vllm_device_contexts,
     check_vllm_generic_eligibility,
+    create_vllm_provider_registry,
     resolve_vllm_generic_affinity,
     resolve_vllm_native_nodes,
     resolve_vllm_visibility_fingerprint,
@@ -88,6 +89,26 @@ class VllmGenericAdapterTest(unittest.TestCase):
 
         self.assertTrue(batch.committable)
         self.assertEqual(batch.ordered_results[0].mapping.source, "explicit-config")
+
+    def test_iluvatar_provider_uses_configured_runtime_utility(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {"KUNPENG_AFFINITY_IXSMI": "/tmp/test-ixsmi"},
+                clear=False,
+            ),
+            patch(
+                "kunpeng_affinity.adapters.vllm_generic.IluvatarRuntimeProvider"
+            ) as provider_type,
+        ):
+            provider_type.name = "iluvatar-runtime-pci"
+            provider_type.return_value.name = "iluvatar-runtime-pci"
+            create_vllm_provider_registry(
+                FakePlatform,
+                requested_provider="iluvatar-runtime-pci",
+            )
+
+        provider_type.assert_called_once_with(FakePlatform, ixsmi="/tmp/test-ixsmi")
 
     def test_visibility_fingerprint_changes_with_visible_order(self) -> None:
         class ReorderedPlatform:

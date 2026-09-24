@@ -55,7 +55,12 @@ def create_vllm_provider_registry(
     if requested_provider == IluvatarRuntimeProvider.name or not _has_direct_bdf(
         platform
     ):
-        registry.register(IluvatarRuntimeProvider(platform))
+        registry.register(
+            IluvatarRuntimeProvider(
+                platform,
+                ixsmi=os.environ.get("KUNPENG_AFFINITY_IXSMI", "ixsmi"),
+            )
+        )
     return registry
 
 
