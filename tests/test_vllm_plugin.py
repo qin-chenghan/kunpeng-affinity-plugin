@@ -92,6 +92,21 @@ class VllmPluginTest(unittest.TestCase):
         self.assertIn("process_kind=EngineCore", "\n".join(captured.output))
         self.assertIn("numa_bind=True", "\n".join(captured.output))
 
+    def test_vendor_local_version_installs_hook(self) -> None:
+        with patch.object(
+            vllm_plugin,
+            "_vllm_version",
+            return_value="0.23.0+corex.5.0.0",
+        ):
+            vllm_plugin.register()
+
+        self.assertTrue(
+            hasattr(
+                self.numa_utils.configure_subprocess,
+                "__kunpeng_affinity_original__",
+            )
+        )
+
     def test_register_is_idempotent(self) -> None:
         with patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"):
             vllm_plugin.register()
@@ -558,6 +573,20 @@ class VllmPluginTest(unittest.TestCase):
 
         self.assertIs(self.numa_utils.configure_subprocess, original)
         self.assertIn("Hook not installed", "\n".join(captured.output))
+
+    def test_upstream_postrelease_is_not_accepted_as_validated(self) -> None:
+        original = self.numa_utils.configure_subprocess
+        with (
+            patch.object(
+                vllm_plugin,
+                "_vllm_version",
+                return_value="0.23.0.post1",
+            ),
+            self.assertLogs(vllm_plugin.logger, level="WARNING"),
+        ):
+            vllm_plugin.register()
+
+        self.assertIs(self.numa_utils.configure_subprocess, original)
 
     def test_unvalidated_version_strict_mode_fails(self) -> None:
         with (

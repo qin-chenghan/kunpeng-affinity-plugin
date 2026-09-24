@@ -136,27 +136,15 @@ def check_vllm_generic_eligibility(
     allowed_cpus: frozenset[int] | set[int] | None = None,
 ) -> None:
     """Apply vLLM's vendor-neutral automatic-binding safety gates."""
-    # Refuse generic binding when the host, current CPU mask, memory policy,
-    # or binding executable cannot support the operation safely.
+    # Refuse generic binding when the host, memory policy, or binding
+    # executable cannot support the operation safely. Existing CPU affinity
+    # is handled by topology's allowed-CPU intersection below.
     root = Path(sysfs_root)
     if not (root / "devices/system/node/node1").is_dir():
         raise AffinityDiscoveryError(
             "automatic NUMA binding requires more than one NUMA node",
             code="NUMA_NOT_AVAILABLE",
         )
-
-    if allowed_cpus is None:
-        try:
-            effective_allowed = frozenset(os.sched_getaffinity(0))
-            cpu_count = os.cpu_count()
-        except (AttributeError, OSError):
-            effective_allowed = frozenset()
-            cpu_count = None
-        if cpu_count is not None and effective_allowed != frozenset(range(cpu_count)):
-            raise AffinityDiscoveryError(
-                "current process CPU affinity is already constrained",
-                code="AFFINITY_ALREADY_CONSTRAINED",
-            )
 
     can_set_mempolicy = getattr(numa_utils, "_can_set_mempolicy", None)
     if not callable(can_set_mempolicy) or not can_set_mempolicy():

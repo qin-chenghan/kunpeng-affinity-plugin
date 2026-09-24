@@ -106,6 +106,7 @@ PYTHON_BIN=python3
 IXSMI_BIN=ixsmi
 VISIBILITY_ENV=CUDA_VISIBLE_DEVICES
 KUNPENG_AFFINITY_PROVIDER=iluvatar-runtime-pci
+AFFINITY_BDFS=0000:45:00.0,0000:48:00.0,0000:af:00.0,0000:b2:00.0
 ```
 
 Use a unique result directory for this run. The runner prints the normalized
@@ -165,6 +166,12 @@ For every target GPU, preserve the output showing:
 The automatic candidate scan and this explicit target-BDF run must be reported
 separately. Do not call the automatic scan failure a target-GPU topology
 failure when the explicit run succeeds.
+
+The current validation accepts vLLM `0.23.0` and vendor-local builds whose
+PEP 440 version is based on it, such as `0.23.0+corex.5.0.0`. An upstream
+post-release or development version is still outside the validated contract.
+If a `0.23.0+...` build is rejected, report it as a regression in the version
+gate rather than changing the source to bypass the check.
 
 ## 5. Provider and visibility checks
 
@@ -253,10 +260,12 @@ PYTHON_BIN="$PYTHON_BIN" \
 The expected fallback evidence is one controlled native-query call followed
 by a generic result and the same child CPU/memory checks.
 
-If the complete vLLM version is `0.23.0+...` and the current code rejects it
-before installing the Hook, classify both spawn stages as `BLOCKED` at version
-gate. Do not call this a Provider or topology failure, and do not bypass the
-gate by editing source or package metadata. Preserve the exact error.
+If a version outside the validated base versions is rejected before installing
+the Hook, classify both spawn stages as `BLOCKED` at version gate. Do not call
+this a Provider or topology failure, and do not bypass the gate by editing
+source or package metadata. Preserve the exact error. A
+`0.23.0+corex.5.0.0` rejection is a regression because vendor-local builds of
+the validated base are expected to pass this gate.
 
 ## 7. Report format
 

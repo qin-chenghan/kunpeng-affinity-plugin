@@ -100,10 +100,12 @@ verification aid, not a production policy control.
 `KUNPENG_AFFINITY_MODE=off` remains authoritative and disables this diagnostic
 override as well.
 
-The target contract is vLLM 0.23.0. vLLM 0.26.0 has additionally passed both
-forced-generic and automatic-fallback single-device dummy spawn diagnostics,
-but neither version has completed the full compatibility and binding
-validation matrix.
+The target contract is vLLM 0.23.0. Vendor-local builds such as
+`0.23.0+corex.5.0.0` are accepted when their upstream base version is
+validated; upstream post/dev releases are not implicitly accepted. vLLM 0.26.0
+has additionally passed both forced-generic and automatic-fallback
+single-device dummy spawn diagnostics, but neither version has completed the
+full compatibility and binding validation matrix.
 
 ## SGLang plugin behavior
 

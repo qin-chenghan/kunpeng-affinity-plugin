@@ -35,6 +35,7 @@ _TARGET_VERSION = "0.23.0"
 _AUXILIARY_DEMO_VERSION = "0.26.0"
 _FORCE_GENERIC_ENV = "KUNPENG_AFFINITY_VLLM_FORCE_GENERIC"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_SUPPORTED_BASE_VERSIONS = frozenset({_TARGET_VERSION, _AUXILIARY_DEMO_VERSION})
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,33 @@ def _vllm_version() -> str:
         return version("vllm")
     except PackageNotFoundError:
         return "unknown"
+
+
+def _is_supported_vllm_version(detected_version: str) -> bool:
+    """Accept validated upstream versions and vendor-local builds of them."""
+    if detected_version in _SUPPORTED_BASE_VERSIONS:
+        return True
+    try:
+        from packaging.version import InvalidVersion, Version
+    except ImportError:
+        # Source-only checks may intentionally run without installing package
+        # dependencies. Keep the fallback limited to the local-version form.
+        return any(
+            detected_version.startswith(f"{base}+")
+            and bool(detected_version.removeprefix(f"{base}+"))
+            for base in _SUPPORTED_BASE_VERSIONS
+        )
+    try:
+        parsed = Version(detected_version)
+    except InvalidVersion:
+        return False
+    return (
+        parsed.base_version in _SUPPORTED_BASE_VERSIONS
+        and parsed.local is not None
+        and parsed.pre is None
+        and parsed.post is None
+        and parsed.dev is None
+    )
 
 
 def _argument(
@@ -369,15 +397,15 @@ def register() -> None:
         return
 
     detected_version = _vllm_version()
-    if detected_version not in {_TARGET_VERSION, _AUXILIARY_DEMO_VERSION}:
+    if not _is_supported_vllm_version(detected_version):
         if mode is PluginMode.STRICT:
             raise AffinityIntegrationError(
-                f"unsupported vLLM version {detected_version}; validated versions "
-                f"are {_TARGET_VERSION} and {_AUXILIARY_DEMO_VERSION}",
+                f"unsupported vLLM version {detected_version}; validated base "
+                f"versions are {_TARGET_VERSION} and {_AUXILIARY_DEMO_VERSION}",
                 code="FRAMEWORK_VERSION_UNSUPPORTED",
             )
         logger.warning(
-            "[kunpeng-affinity] unvalidated vLLM version=%s; target=%s, "
+            "[kunpeng-affinity] unvalidated vLLM version=%s; validated bases=%s, "
             "auxiliary-demo=%s; plugin Hook not installed",
             detected_version,
             _TARGET_VERSION,

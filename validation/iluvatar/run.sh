@@ -74,6 +74,7 @@ source "$config_file"
 : "${VISIBILITY_ENV:=CUDA_VISIBLE_DEVICES}"
 : "${REORDER_VISIBLE_DEVICES:=1,0}"
 : "${SPAWN_VISIBLE_DEVICES:=0}"
+: "${AFFINITY_BDFS:=}"
 : "${KUNPENG_AFFINITY_MODE:=auto}"
 : "${KUNPENG_AFFINITY_PROVIDER:=iluvatar-runtime-pci}"
 : "${KUNPENG_AFFINITY_CPU_POLICY:=node}"
@@ -212,6 +213,7 @@ stage_preflight() {
   echo "ixsmi_bin=$ixsmi_bin"
   echo "sysfs_root=$SYSFS_ROOT"
   echo "visibility_env=$VISIBILITY_ENV"
+  echo "affinity_bdfs=${AFFINITY_BDFS:-<automatic PCI candidates>}"
   uname -a
   git status --short --branch
   git log -1 --oneline --decorate
@@ -245,7 +247,8 @@ stage_unit_tests() {
 
 stage_topology_probe() {
   cd "$repo_root"
-  PYTHON_BIN="$python_bin" ./scripts/probe-host.sh
+  AFFINITY_BDFS="$AFFINITY_BDFS" \
+    PYTHON_BIN="$python_bin" ./scripts/probe-host.sh
 }
 
 stage_provider_single() {

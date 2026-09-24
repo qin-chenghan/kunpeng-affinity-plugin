@@ -57,6 +57,7 @@ and comments. Boolean stage settings accept `1/0`, `true/false`, `yes/no`, or
 | `VISIBILITY_ENV` | `CUDA_VISIBLE_DEVICES` | Visibility variable; may also be `ILUVATAR_VISIBLE_DEVICES`. |
 | `REORDER_VISIBLE_DEVICES` | `1,0` | Device order used by the reorder probe. |
 | `SPAWN_VISIBLE_DEVICES` | `0` | Devices exposed to controlled dummy-spawn checks. |
+| `AFFINITY_BDFS` | empty | Trusted comma-separated target BDFs for topology probing; use this on heterogeneous hosts to exclude unrelated PCI functions. |
 
 ### Plugin settings
 
@@ -76,6 +77,12 @@ and comments. Boolean stage settings accept `1/0`, `true/false`, `yes/no`, or
 `RUN_AUTO_FALLBACK_SPAWN` enable their corresponding stages. They default to
 `1`. The reorder stage is skipped automatically when fewer than two devices
 are visible.
+
+On a heterogeneous host, set `AFFINITY_BDFS` to the target GPU BDFs reported
+by the Runtime inventory. If it is empty, the topology stage scans all display
+and processing-accelerator PCI candidates; an unrelated device outside the
+container CPU set can make that candidate scan fail even when the target GPU
+topology is valid.
 
 `ENABLE_ENVIRONMENT_CHANGES=0` is the final safety gate. While it remains
 disabled, source installation and both dummy-spawn stages are reported as

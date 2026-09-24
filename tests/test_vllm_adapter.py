@@ -192,6 +192,21 @@ class VllmGenericAdapterTest(unittest.TestCase):
                 allowed_cpus={0, 1},
             )
 
+    def test_generic_eligibility_allows_inherited_cpu_restriction(self) -> None:
+        numa_utils = types.SimpleNamespace(_can_set_mempolicy=lambda: True)
+        with (
+            patch(
+                "kunpeng_affinity.adapters.vllm_generic.os.sched_getaffinity",
+                side_effect=AssertionError("generic eligibility must not reject cpuset"),
+                create=True,
+            ),
+            patch(
+                "kunpeng_affinity.adapters.vllm_generic.shutil.which",
+                return_value="/usr/bin/numactl",
+            ),
+        ):
+            check_vllm_generic_eligibility(numa_utils, sysfs_root=self.root)
+
     def test_generic_eligibility_rejects_missing_mempolicy(self) -> None:
         numa_utils = types.SimpleNamespace(_can_set_mempolicy=lambda: False)
         with self.assertRaisesRegex(AffinityDiscoveryError, "memory policy"):
