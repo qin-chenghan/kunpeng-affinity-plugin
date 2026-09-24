@@ -139,6 +139,32 @@ SGLANG_PLUGINS=kunpeng_affinity sglang serve <model-path>
 The source-level entry point and fake-runtime tests prove packaging and hook
 semantics, but do not yet prove a real SGLang 0.5.18 multi-GPU lifecycle.
 
+## One-command Iluvatar validation
+
+The staged target-environment checks are consolidated under
+`validation/iluvatar/`. The committed `config.env.example` provides safe
+read-only defaults. For complete validation in a dedicated container, copy it
+once to the Git-ignored `config.env` and change the environment-change gate:
+
+```bash
+cp validation/iluvatar/config.env.example validation/iluvatar/config.env
+sed -i 's/ENABLE_ENVIRONMENT_CHANGES=0/ENABLE_ENVIRONMENT_CHANGES=1/' \
+  validation/iluvatar/config.env
+```
+
+Then run:
+
+```bash
+./validation/iluvatar/run.sh
+```
+
+Without a local file, the runner uses the template and performs only the
+read-only source, topology and Runtime Provider checks. Setting
+`ENABLE_ENVIRONMENT_CHANGES=1` additionally enables editable installation,
+entry-point verification and the two vLLM dummy-spawn binding checks. Every
+stage has its own log and the suite stops at the first failed gate. See
+`validation/iluvatar/README.md` for the stage order and safety boundary.
+
 ## Source deployment
 
 Clone the repository on the target machine, enter the Python environment used
