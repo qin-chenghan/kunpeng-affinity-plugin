@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from kunpeng_affinity.core.errors import AffinityDiscoveryError
-from kunpeng_affinity.core.models import BatchAffinityResult, DeviceContext
+from kunpeng_affinity.core.models import (
+    BatchAffinityResult,
+    DeviceContext,
+    DeviceResolution,
+    NativeOutcome,
+    NativeStatus,
+)
 from kunpeng_affinity.policy import GenericAffinityProvider
 from kunpeng_affinity.providers import (
     IluvatarRuntimeProvider,
@@ -17,6 +23,7 @@ from kunpeng_affinity.providers import (
     VllmPlatformProvider,
 )
 from kunpeng_affinity.topology.cpulist import CpuListError, parse_cpulist
+from kunpeng_affinity.topology.analyzer import analyze_bdf
 
 
 def _device_count(platform: Any) -> int:
@@ -118,9 +125,12 @@ def resolve_vllm_visibility_fingerprint(
     local_rank: int | None = None,
     dp_local_rank: int | None = None,
     allowed_cpus: frozenset[int] | set[int] | None = None,
+    include_topology: bool = False,
+    sysfs_root: Path | str = Path("/sys"),
 ) -> str:
-    """Capture the ordered logical-device mapping without topology I/O."""
-    # The fingerprint records the mapping that topology analysis is about to use.
+    """Capture the ordered visibility, optionally including Linux evidence."""
+    # Mapping-only mode is useful for framework identity checks. Commit paths
+    # request the full topology fingerprint through the same resolver.
     contexts = build_vllm_device_contexts(
         platform,
         process_kind=process_kind,
@@ -130,8 +140,77 @@ def resolve_vllm_visibility_fingerprint(
     )
     active_registry = registry or create_vllm_provider_registry(platform)
     mapper = active_registry.select(contexts, requested=requested_provider)
-    _, fingerprint = GenericAffinityProvider(mapper).mapping_snapshot(contexts)
-    return fingerprint
+    resolver = GenericAffinityProvider(
+        mapper,
+        sysfs_root=sysfs_root,
+        allowed_cpus=allowed_cpus,
+        snapshot_metadata={
+            "adapter": "vllm.configure_subprocess.v1",
+        },
+    )
+    if not include_topology:
+        _, fingerprint = resolver.mapping_snapshot(contexts)
+        return fingerprint
+    batch = resolver.resolve_all(contexts)
+    if not batch.committable or batch.visibility_fingerprint is None:
+        summary = "; ".join(batch.failure_summary) or "snapshot is not committable"
+        raise AffinityDiscoveryError(
+            f"cannot revalidate vLLM affinity snapshot: {summary}",
+            code="SNAPSHOT_CHANGED",
+        )
+    return batch.visibility_fingerprint
+
+
+def resolve_vllm_consumed_device(
+    platform: Any,
+    device_index: int,
+    *,
+    requested_provider: str | None = None,
+    process_kind: str = "worker",
+    local_rank: int | None = None,
+    dp_local_rank: int | None = None,
+    allowed_cpus: frozenset[int] | set[int] | None = None,
+    sysfs_root: Path | str = Path("/sys"),
+) -> DeviceResolution:
+    """Re-sample one child-consumed device without comparing parent CPU sets."""
+    contexts = build_vllm_device_contexts(
+        platform,
+        process_kind=process_kind,
+        local_rank=local_rank,
+        dp_local_rank=dp_local_rank,
+        allowed_cpus=allowed_cpus,
+    )
+    if device_index < 0 or device_index >= len(contexts):
+        raise AffinityDiscoveryError(
+            f"vLLM consumed device index {device_index} is outside visible range",
+            code="INHERITED_RESULT_INVALID",
+        )
+    registry = create_vllm_provider_registry(
+        platform,
+        requested_provider=requested_provider,
+    )
+    mapper = registry.select(contexts, requested=requested_provider)
+    resolver = GenericAffinityProvider(
+        mapper,
+        sysfs_root=sysfs_root,
+        allowed_cpus=allowed_cpus,
+        snapshot_metadata={"adapter": "vllm.configure_subprocess.v1"},
+    )
+    mappings, _ = resolver.mapping_snapshot(contexts)
+    context = contexts[device_index]
+    mapping = mappings[device_index]
+    affinity = analyze_bdf(
+        mapping.pci_bdf,
+        sysfs_root=sysfs_root,
+        allowed_cpus=allowed_cpus,
+        mapping_source=mapping.source,
+    )
+    if not affinity.bindable:
+        raise AffinityDiscoveryError(
+            f"inherited vLLM device topology is {affinity.status.value}",
+            code="INHERITED_RESULT_INVALID",
+        )
+    return DeviceResolution(context=context, mapping=mapping, affinity=affinity)
 
 
 def check_vllm_generic_eligibility(
@@ -145,7 +224,9 @@ def check_vllm_generic_eligibility(
     # executable cannot support the operation safely. Existing CPU affinity
     # is handled by topology's allowed-CPU intersection below.
     root = Path(sysfs_root)
-    if not (root / "devices/system/node/node1").is_dir():
+    node_root = root / "devices/system/node"
+    numa_nodes = tuple(path for path in node_root.glob("node[0-9]*") if path.is_dir())
+    if len(numa_nodes) < 2:
         raise AffinityDiscoveryError(
             "automatic NUMA binding requires more than one NUMA node",
             code="NUMA_NOT_AVAILABLE",
@@ -255,6 +336,92 @@ def resolve_vllm_native_nodes(
     return nodes
 
 
+def classify_vllm_native_result(
+    numa_utils: Any,
+    platform: Any,
+) -> NativeOutcome:
+    """Classify the native query without converting native errors to fallback."""
+    query = getattr(numa_utils, "get_auto_numa_nodes", None)
+    if not callable(query):
+        return NativeOutcome(
+            status=NativeStatus.FALLBACK_ALLOWED,
+            failure_code="NATIVE_QUERY_UNAVAILABLE",
+            evidence=("vLLM native query symbol is missing",),
+        )
+
+    try:
+        raw_nodes = query()
+    except Exception as exc:
+        return NativeOutcome(
+            status=NativeStatus.ERROR,
+            failure_code="NATIVE_QUERY_FAILED",
+            original_error=exc,
+            evidence=("vLLM native query raised an exception",),
+        )
+
+    if raw_nodes is None or raw_nodes == []:
+        if _native_platform_is_uncovered(platform):
+            return NativeOutcome(
+                status=NativeStatus.FALLBACK_ALLOWED,
+                failure_code="NATIVE_QUERY_UNAVAILABLE",
+                evidence=("platform lacks a direct PCI identity capability",),
+            )
+        return NativeOutcome(
+            status=NativeStatus.PRESERVE_NATIVE,
+            failure_code="NATIVE_RESULT_EMPTY",
+            evidence=("native query returned no usable result",),
+        )
+
+    if not isinstance(raw_nodes, list):
+        return NativeOutcome(
+            status=NativeStatus.INVALID,
+            failure_code="NATIVE_RESULT_INVALID",
+            evidence=(f"native result type={type(raw_nodes).__name__}",),
+        )
+
+    try:
+        count = _device_count(platform)
+    except AffinityDiscoveryError as exc:
+        return NativeOutcome(
+            status=NativeStatus.ERROR,
+            failure_code=exc.code,
+            original_error=exc,
+            evidence=("visible device count could not be validated",),
+        )
+    if len(raw_nodes) != count:
+        return NativeOutcome(
+            status=NativeStatus.INVALID,
+            failure_code="DEVICE_COUNT_MISMATCH",
+            evidence=(f"native_count={len(raw_nodes)} visible_count={count}",),
+        )
+    if any(
+        not isinstance(node, int) or isinstance(node, bool) or node < 0
+        for node in raw_nodes
+    ):
+        return NativeOutcome(
+            status=NativeStatus.INVALID,
+            failure_code="NATIVE_RESULT_INVALID",
+            evidence=("native result contains an invalid NUMA node",),
+        )
+    return NativeOutcome(
+        status=NativeStatus.VALID,
+        nodes=tuple(raw_nodes),
+        evidence=("vLLM native NUMA result satisfies its return contract",),
+    )
+
+
+def _native_platform_is_uncovered(platform: Any) -> bool:
+    """Use an observable platform capability gap as the fallback proof."""
+    method = getattr(platform, "get_all_gpu_pci_bus_ids", None)
+    if not callable(method):
+        return True
+    try:
+        result = method()
+    except (NotImplementedError, RuntimeError, OSError, ValueError):
+        return True
+    return not isinstance(result, Mapping) or not bool(result)
+
+
 def resolve_vllm_generic_affinity(
     platform: Any,
     *,
@@ -277,16 +444,13 @@ def resolve_vllm_generic_affinity(
         allowed_cpus=allowed_cpus,
     )
     active_registry = registry or create_vllm_provider_registry(platform)
-    mapper = active_registry.select(contexts, requested=requested_provider)
     batch = GenericAffinityProvider(
-        mapper,
+        registry=active_registry,
+        requested_provider=requested_provider,
         sysfs_root=sysfs_root,
         allowed_cpus=allowed_cpus,
+        snapshot_metadata={
+            "adapter": "vllm.configure_subprocess.v1",
+        },
     ).resolve_all(contexts)
-    if not batch.committable:
-        summary = "; ".join(batch.failure_summary) or "incomplete topology result"
-        raise AffinityDiscoveryError(
-            f"generic vLLM affinity resolution is not committable: {summary}",
-            code="BATCH_NOT_COMMITTABLE",
-        )
     return batch

@@ -11,6 +11,10 @@ from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Iterator
 
+from kunpeng_affinity.adapters.vllm_commit import (
+    release_invalid_vllm_transaction,
+    validate_inherited_vllm_transaction,
+)
 from kunpeng_affinity.config import (
     CpuPolicy,
     PluginMode,
@@ -20,11 +24,14 @@ from kunpeng_affinity.config import (
 from kunpeng_affinity.core.errors import (
     AffinityDiscoveryError,
     AffinityIntegrationError,
+    NativeContractError,
 )
+from kunpeng_affinity.core.models import NativeOutcome, NativeStatus
 
 logger = logging.getLogger(__name__)
 
 _HOOK_MARKER = "__kunpeng_affinity_original__"
+_TRANSACTION_MARKER = "_kunpeng_affinity_transaction"
 _REQUIRED_PARAMETERS = {
     "vllm_config",
     "local_rank",
@@ -45,6 +52,7 @@ class _AutomaticAffinityResolution:
     visibility_fingerprint: str | None
     registry: Any | None
     requested_provider: str | None = None
+    snapshot_json: str | None = None
 
 
 def _vllm_version() -> str:
@@ -154,6 +162,12 @@ def _resolve_generic_nodes(
         local_rank=local_rank,
         dp_local_rank=dp_local_rank,
     )
+    if not batch.committable:
+        summary = "; ".join(batch.failure_summary) or "incomplete topology result"
+        raise AffinityDiscoveryError(
+            f"generic vLLM affinity resolution is not committable: {summary}",
+            code=batch.status.value.upper(),
+        )
     if batch.visibility_fingerprint is None:
         raise AffinityDiscoveryError(
             "generic NUMA resolution did not produce a visibility fingerprint",
@@ -165,6 +179,7 @@ def _resolve_generic_nodes(
         visibility_fingerprint=batch.visibility_fingerprint,
         registry=registry,
         requested_provider=requested_provider,
+        snapshot_json=batch.snapshot_json,
     )
 
 
@@ -179,40 +194,47 @@ def _resolve_automatic_nodes(
     dp_local_rank: int | None = None,
 ) -> _AutomaticAffinityResolution:
     """Resolve a complete node list without mutating vLLM configuration."""
-    from kunpeng_affinity.adapters import resolve_vllm_visibility_fingerprint
-
-    # Keep one provider registry for mapping and the later visibility recheck.
-    registry = _provider_registry(platform, requested_provider)
+    registry = None
     if not force_generic:
-        from kunpeng_affinity.adapters import resolve_vllm_native_nodes
+        from kunpeng_affinity.adapters import classify_vllm_native_result
 
-        # A valid framework-native result has priority over the Linux fallback.
-        try:
-            nodes = resolve_vllm_native_nodes(numa_utils, platform)
-            fingerprint = resolve_vllm_visibility_fingerprint(
-                platform,
-                registry=registry,
-                requested_provider=requested_provider,
-                process_kind=process_kind,
-                local_rank=local_rank,
-                dp_local_rank=dp_local_rank,
+        # Classify the native result before deciding whether fallback is legal.
+        outcome = classify_vllm_native_result(numa_utils, platform)
+        if outcome.status is NativeStatus.ERROR:
+            assert outcome.original_error is not None
+            raise outcome.original_error
+        if outcome.status is NativeStatus.INVALID:
+            raise NativeContractError(
+                "vLLM native NUMA result violates its return contract: "
+                + (outcome.failure_code or "NATIVE_RESULT_INVALID"),
+                code=outcome.failure_code or "NATIVE_RESULT_INVALID",
             )
+        if outcome.status is NativeStatus.PRESERVE_NATIVE:
+            return _AutomaticAffinityResolution(
+                nodes=(),
+                source="native-preserved",
+                visibility_fingerprint=None,
+                registry=None,
+                requested_provider=requested_provider,
+            )
+        if outcome.status is NativeStatus.VALID:
+            nodes = list(outcome.nodes)
             return _AutomaticAffinityResolution(
                 nodes=tuple(nodes),
                 source="native",
-                visibility_fingerprint=fingerprint,
-                registry=registry,
+                visibility_fingerprint=None,
+                registry=None,
                 requested_provider=requested_provider,
             )
-        except AffinityDiscoveryError as exc:
-            logger.warning(
-                "[kunpeng-affinity] native NUMA result unavailable code=%s: %s; "
-                "trying generic Linux topology",
-                exc.code,
-                exc,
-            )
+        logger.warning(
+            "[kunpeng-affinity] native NUMA result unavailable code=%s; "
+            "trying generic Linux topology",
+            outcome.failure_code,
+        )
 
-    # Native discovery was unavailable or explicitly bypassed; use the generic path.
+    # Native discovery was unavailable or explicitly bypassed; only now build
+    # the provider registry and inspect device identity.
+    registry = _provider_registry(platform, requested_provider)
     return _resolve_generic_nodes(
         numa_utils,
         platform,
@@ -243,6 +265,7 @@ def _revalidate_visibility(
         process_kind=process_kind,
         local_rank=local_rank,
         dp_local_rank=dp_local_rank,
+        include_topology=True,
     )
     if current != resolution.visibility_fingerprint:
         raise AffinityDiscoveryError(
@@ -304,10 +327,23 @@ def _automatic_affinity_context(
             local_rank=local_rank,
             dp_local_rank=dp_local_rank,
         )
+        # Native results remain owned by vLLM. The plugin must not create a
+        # marker or rewrite fields when the native query was usable, or when
+        # vLLM deliberately returned an empty result that it owns.
+        if resolution.source in {"native", "native-preserved"}:
+            with current(*args, **kwargs):
+                yield
+            return
         from kunpeng_affinity.adapters.vllm_commit import commit_vllm_nodes
 
         # Commit only after the complete result and its visibility are validated.
-        commit = commit_vllm_nodes(parallel_config, list(resolution.nodes))
+        commit = commit_vllm_nodes(
+            parallel_config,
+            list(resolution.nodes),
+            visibility_fingerprint=resolution.visibility_fingerprint,
+            snapshot_json=resolution.snapshot_json,
+            requested_provider=resolution.requested_provider,
+        )
     except AffinityDiscoveryError as exc:
         # Discovery failures are recoverable in auto mode and fatal in strict mode.
         if force_generic or mode is PluginMode.STRICT:
@@ -318,6 +354,12 @@ def _automatic_affinity_context(
             exc.code,
             exc,
         )
+        # A user-supplied CPU policy still needs vLLM's original context even
+        # when the plugin cannot add an automatically discovered NUMA node.
+        if getattr(parallel_config, "numa_bind_cpus", None) is not None:
+            with current(*args, **kwargs):
+                yield
+            return
         yield
         return
 
@@ -333,6 +375,15 @@ def _automatic_affinity_context(
         manager.__enter__()
     except BaseException:
         commit.rollback()
+        raise
+    try:
+        commit.mark_committed()
+    except BaseException:
+        error = sys.exc_info()
+        try:
+            manager.__exit__(*error)
+        finally:
+            commit.rollback()
         raise
 
     try:
@@ -433,6 +484,35 @@ def register() -> None:
             _numa_bind_enabled(vllm_config),
         )
         parallel_config = getattr(vllm_config, "parallel_config", None)
+
+        # Reuse a committed plugin result before considering a new resolution.
+        # This covers repeated use in one process and serialized child configs.
+        if getattr(parallel_config, _TRANSACTION_MARKER, None) is not None:
+            try:
+                validate_inherited_vllm_transaction(
+                    parallel_config,
+                    numa_utils=numa_utils,
+                    platform=_current_platform(),
+                    local_rank=local_rank,
+                    dp_local_rank=dp_local_rank,
+                    process_kind=process_kind,
+                )
+            except AffinityDiscoveryError as exc:
+                if mode is PluginMode.STRICT:
+                    raise _strict_failure(exc) from exc
+                logger.warning(
+                    "[kunpeng-affinity] inherited transaction released code=%s: %s",
+                    exc.code,
+                    exc,
+                )
+                release_invalid_vllm_transaction(parallel_config)
+                with current(*args, **kwargs):
+                    yield
+                return
+            with current(*args, **kwargs):
+                yield
+            return
+
         if _should_resolve(parallel_config, process_kind):
             # Automatic discovery is limited to eligible worker-like processes.
             with _automatic_affinity_context(

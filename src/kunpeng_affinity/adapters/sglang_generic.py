@@ -42,6 +42,28 @@ class SglangTorchPlatform:
             code="RUNTIME_IDENTITY_UNAVAILABLE",
         )
 
+    def device_count(self) -> int:
+        cuda = getattr(self.torch, "cuda", None)
+        method = getattr(cuda, "device_count", None)
+        if not callable(method):
+            raise DeviceMappingError(
+                "torch runtime does not expose device_count",
+                code="PROVIDER_UNAVAILABLE",
+            )
+        try:
+            count = method()
+        except (NotImplementedError, RuntimeError, OSError, ValueError) as exc:
+            raise DeviceMappingError(
+                f"torch runtime device count query failed: {exc}",
+                code="PROVIDER_UNAVAILABLE",
+            ) from exc
+        if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+            raise DeviceMappingError(
+                f"torch runtime returned invalid device count {count!r}",
+                code="DEVICE_COUNT_INVALID",
+            )
+        return count
+
     def get_device_bdf(self, device_id: int) -> str | None:
         cuda = getattr(self.torch, "cuda", None)
         if cuda is None:
@@ -49,9 +71,21 @@ class SglangTorchPlatform:
         for name in ("get_device_pci_bus_id", "_get_device_pci_bus_id"):
             method = getattr(cuda, name, None)
             if callable(method):
-                value = method(device_id)
+                try:
+                    value = method(device_id)
+                except (NotImplementedError, RuntimeError, OSError, ValueError) as exc:
+                    raise DeviceMappingError(
+                        f"torch PCI BDF query failed for device {device_id}: {exc}",
+                        code="RUNTIME_IDENTITY_UNAVAILABLE",
+                    ) from exc
                 return _valid_bdf(value)
-        properties = cuda.get_device_properties(device_id)
+        try:
+            properties = cuda.get_device_properties(device_id)
+        except (AttributeError, RuntimeError, OSError, ValueError) as exc:
+            raise DeviceMappingError(
+                f"torch device properties query failed for device {device_id}: {exc}",
+                code="RUNTIME_IDENTITY_UNAVAILABLE",
+            ) from exc
         for name in ("pci_bus_id", "pci_bus_id_string", "bus_id"):
             value = getattr(properties, name, None)
             if value is not None:
@@ -145,7 +179,7 @@ def resolve_sglang_numa_node(
     sysfs_root: Path | str = Path("/sys"),
     ixsmi: str = "ixsmi",
 ) -> int:
-    """Resolve one SGLang GPU id to a proven Linux NUMA node."""
+    """Resolve one visible SGLang GPU after validating the complete batch."""
     # Reuse the shared batch resolver so SGLang and vLLM apply the same
     # mapping validation and topology rules.
     if torch_module is None:
@@ -155,15 +189,40 @@ def resolve_sglang_numa_node(
     from kunpeng_affinity.policy import GenericAffinityProvider
 
     platform = SglangTorchPlatform(torch_module)
-    context = DeviceContext(framework="sglang", logical_device_id=gpu_id)
-    batch = GenericAffinityProvider(
+    count = platform.device_count()
+    if gpu_id < 0 or gpu_id >= count:
+        raise DeviceMappingError(
+            f"SGLang GPU id {gpu_id} is outside visible range 0..{count - 1}",
+            code="DEVICE_INDEX_INVALID",
+        )
+    contexts = tuple(
+        DeviceContext(framework="sglang", logical_device_id=device_id)
+        for device_id in range(count)
+    )
+    resolver = GenericAffinityProvider(
         SglangRuntimeProvider(platform, ixsmi=ixsmi),
         sysfs_root=sysfs_root,
-    ).resolve_all((context,))
+        snapshot_metadata={
+            "adapter": "sglang.numa_query.v1",
+        },
+    )
+    batch = resolver.resolve_all(contexts)
     if not batch.committable:
         reason = "; ".join(batch.failure_summary) or "topology result is not committable"
         raise DeviceMappingError(reason, code="BATCH_NOT_COMMITTABLE")
-    node = batch.ordered_results[0].affinity.numa_node
+    # Re-sample the same complete batch immediately before returning the node.
+    current = resolver.resolve_all(contexts)
+    if (
+        not current.committable
+        or current.visibility_fingerprint != batch.visibility_fingerprint
+        or tuple(item.affinity.numa_node for item in current.ordered_results)
+        != tuple(item.affinity.numa_node for item in batch.ordered_results)
+    ):
+        raise DeviceMappingError(
+            "SGLang device visibility or NUMA topology changed during resolution",
+            code="SNAPSHOT_CHANGED",
+        )
+    node = batch.ordered_results[gpu_id].affinity.numa_node
     if node is None:
         raise DeviceMappingError(
             f"NUMA node is unproven for SGLang GPU {gpu_id}",

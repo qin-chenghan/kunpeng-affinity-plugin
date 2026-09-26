@@ -18,6 +18,10 @@ class PluginConfigError(AffinityError):
     """Plugin configuration is invalid and cannot be interpreted safely."""
 
 
+class PluginContractError(AffinityError):
+    """An internal plugin protocol or value-object contract was violated."""
+
+
 class AffinityDiscoveryError(AffinityError):
     """A device mapping or topology fact could not be established."""
 
@@ -36,3 +40,7 @@ class BatchValidationError(AffinityDiscoveryError):
 
 class AffinityIntegrationError(AffinityError):
     """A strict framework integration cannot continue safely."""
+
+
+class NativeContractError(AffinityError):
+    """A framework-native query violated its declared return contract."""

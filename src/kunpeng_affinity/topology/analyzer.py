@@ -250,6 +250,7 @@ def _result(
     normalized_bdf: str | None,
     mapping_source: str,
     status: ResultStatus,
+    failure_code: str | None = None,
     path_data: _PathData | None = None,
     diagnostics: tuple[str, ...] = (),
     numa_node: int | None = None,
@@ -264,6 +265,7 @@ def _result(
         normalized_bdf=normalized_bdf,
         device_mapping_source=mapping_source,
         status=status,
+        failure_code=failure_code,
         pci_path=path_data.nodes if path_data else (),
         root_bus_path=path_data.root_bus_path if path_data else None,
         numa_node=numa_node,
@@ -298,24 +300,31 @@ def analyze_bdf(
     node_cpus: frozenset[int] = frozenset()
     online_cpus: frozenset[int] = frozenset()
     effective_allowed: frozenset[int] = frozenset()
+    failure_code = "TOPOLOGY_INVALID"
     try:
         # Resolve the PCI path and prove a unique NUMA node before reading CPU sets.
+        failure_code = "BDF_INVALID"
         normalized = normalize_bdf(bdf)
+        failure_code = "INCOMPLETE_PCI_PATH"
         path_data = _collect_path(root, normalized)
+        failure_code = "NUMA_INVENTORY_INVALID"
         inventory = _node_inventory(root)
+        failure_code = "NUMA_EVIDENCE_INVALID"
         numa_node, numa_source, diagnostics = _resolve_numa(path_data, inventory)
         if numa_node is None:
             return _result(
                 input_bdf=bdf,
                 normalized_bdf=normalized,
                 mapping_source=mapping_source,
-                status=ResultStatus.PARTIAL,
+                status=ResultStatus.FAILED,
+                failure_code="NUMA_UNKNOWN",
                 path_data=path_data,
                 diagnostics=diagnostics
                 + ("NUMA node could not be proven from PCI sysfs",),
             )
 
         # Restrict the suggested CPUs to CPUs that are online and allowed here.
+        failure_code = "CPUSET_INVALID"
         node_cpus = inventory[numa_node]
         if not node_cpus:
             raise TopologyError(f"NUMA node {numa_node} has an empty CPU list")
@@ -357,6 +366,7 @@ def analyze_bdf(
             normalized_bdf=normalized,
             mapping_source=mapping_source,
             status=ResultStatus.FAILED,
+            failure_code=failure_code,
             path_data=path_data,
             diagnostics=diagnostics + (str(exc),),
             numa_node=numa_node,

@@ -11,7 +11,6 @@ from kunpeng_affinity.topology.cpulist import format_cpulist
 
 class ResultStatus(str, Enum):
     SUCCESS = "success"
-    PARTIAL = "partial"
     FAILED = "failed"
 
 
@@ -39,6 +38,7 @@ class AffinityResult:
     normalized_bdf: str | None
     device_mapping_source: str
     status: ResultStatus
+    failure_code: str | None = None
     pci_path: tuple[PciPathNode, ...] = ()
     root_bus_path: str | None = None
     numa_node: int | None = None
@@ -60,6 +60,7 @@ class AffinityResult:
             "normalized_bdf": self.normalized_bdf,
             "device_mapping_source": self.device_mapping_source,
             "status": self.status.value,
+            "failure_code": self.failure_code,
             "bindable": self.bindable,
             "pci_path": [node.to_dict() for node in self.pci_path],
             "root_bus_path": self.root_bus_path,

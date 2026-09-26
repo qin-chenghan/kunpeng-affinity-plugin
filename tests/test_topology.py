@@ -188,7 +188,8 @@ class TopologyAnalyzerTest(unittest.TestCase):
 
         result = analyze_bdf("0000:01:00.0", sysfs_root=self.root, allowed_cpus=set(range(4)))
 
-        self.assertEqual(result.status, ResultStatus.PARTIAL)
+        self.assertEqual(result.status, ResultStatus.FAILED)
+        self.assertEqual(result.failure_code, "NUMA_UNKNOWN")
         self.assertFalse(result.bindable)
 
     def test_broken_parent_chain_fails(self) -> None:

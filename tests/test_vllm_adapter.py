@@ -15,7 +15,9 @@ from kunpeng_affinity.adapters import (
     resolve_vllm_native_nodes,
     resolve_vllm_visibility_fingerprint,
 )
+from kunpeng_affinity.adapters.vllm_generic import classify_vllm_native_result
 from kunpeng_affinity.core.errors import AffinityDiscoveryError
+from kunpeng_affinity.core.models import NativeStatus
 from kunpeng_affinity.providers import ProviderRegistry, StaticMappingProvider
 
 
@@ -200,6 +202,21 @@ class VllmGenericAdapterTest(unittest.TestCase):
                 sysfs_root=self.root,
                 allowed_cpus={0, 1},
             )
+
+    def test_empty_native_result_falls_back_only_when_platform_identity_is_uncovered(self) -> None:
+        query = types.SimpleNamespace(get_auto_numa_nodes=lambda: [])
+        covered = types.SimpleNamespace(
+            get_all_gpu_pci_bus_ids=lambda: {0: "0000:ab:00.0"},
+        )
+
+        self.assertEqual(
+            classify_vllm_native_result(query, object()).status,
+            NativeStatus.FALLBACK_ALLOWED,
+        )
+        self.assertEqual(
+            classify_vllm_native_result(query, covered).status,
+            NativeStatus.PRESERVE_NATIVE,
+        )
 
     def test_generic_eligibility_uses_vendor_neutral_gates(self) -> None:
         numa_utils = types.SimpleNamespace(_can_set_mempolicy=lambda: True)

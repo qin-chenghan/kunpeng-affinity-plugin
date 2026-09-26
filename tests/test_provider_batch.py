@@ -3,8 +3,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from kunpeng_affinity.core.models import DeviceContext, DeviceMapping
+from kunpeng_affinity.core.errors import PluginContractError
+from kunpeng_affinity.core.models import BatchStatus, DeviceContext, DeviceMapping
 from kunpeng_affinity.policy import GenericAffinityProvider
 from kunpeng_affinity.providers import (
     LinuxContextProvider,
@@ -96,6 +98,41 @@ class ProviderRegistryTest(unittest.TestCase):
         selected = registry.select((context(0),), requested="second")
 
         self.assertIs(selected, second)
+
+    def test_registry_selection_failure_is_returned_as_batch_status(self) -> None:
+        registry = ProviderRegistry((StaticMappingProvider({0: "01:00.0"}),))
+        resolver = GenericAffinityProvider(
+            registry=registry,
+            requested_provider=None,
+            allowed_cpus=set(range(8)),
+        )
+
+        result = resolver.resolve_all((context(1),))
+
+        self.assertFalse(result.committable)
+        self.assertEqual(result.status, BatchStatus.UNSUPPORTED_PROVIDER)
+
+    def test_ambiguous_registry_selection_is_returned_as_batch_status(self) -> None:
+        first = StaticMappingProvider({0: "01:00.0"})
+        second = StaticMappingProvider({0: "02:00.0"})
+        second.name = "second"
+        resolver = GenericAffinityProvider(
+            registry=ProviderRegistry((first, second)),
+            allowed_cpus=set(range(8)),
+        )
+
+        result = resolver.resolve_all((context(0),))
+
+        self.assertFalse(result.committable)
+        self.assertEqual(result.status, BatchStatus.AMBIGUOUS_PROVIDER)
+
+    def test_invalid_probe_return_is_a_contract_error(self) -> None:
+        provider = StaticMappingProvider({0: "01:00.0"})
+        provider.probe = lambda contexts: True
+        registry = ProviderRegistry((provider,))
+
+        with self.assertRaisesRegex(PluginContractError, "invalid probe result"):
+            registry.select((context(0),))
 
 
 class LinuxContextProviderTest(unittest.TestCase):
@@ -311,6 +348,20 @@ class GenericAffinityProviderTest(unittest.TestCase):
         self.assertFalse(result.committable)
         self.assertEqual(len(result.ordered_results), 2)
         self.assertTrue(result.failure_summary)
+        self.assertEqual(result.status, BatchStatus.TOPOLOGY_FAILED)
+
+    def test_empty_cpu_intersection_has_cpuset_batch_status(self) -> None:
+        resolver = GenericAffinityProvider(
+            StaticMappingProvider({0: "01:00.0"}),
+            sysfs_root=self.root,
+            allowed_cpus={4, 5},
+        )
+
+        result = resolver.resolve_all((context(0),))
+
+        self.assertFalse(result.committable)
+        self.assertEqual(result.status, BatchStatus.CPUSET_FAILED)
+        self.assertIn("CPUSET_INVALID", result.failure_summary[0])
 
     def test_missing_mapping_does_not_produce_partial_results(self) -> None:
         resolver = GenericAffinityProvider(
@@ -390,6 +441,72 @@ class GenericAffinityProviderTest(unittest.TestCase):
         self.assertTrue(result.committable)
         self.assertIsNotNone(result.visibility_fingerprint)
         self.assertEqual(len(result.visibility_fingerprint), 64)
+
+    def test_full_fingerprint_includes_cpu_and_topology_evidence(self) -> None:
+        first = GenericAffinityProvider(
+            StaticMappingProvider({0: "01:00.0"}),
+            sysfs_root=self.root,
+            allowed_cpus={0, 1, 2, 3},
+        ).resolve_all((context(0),))
+        second = GenericAffinityProvider(
+            StaticMappingProvider({0: "01:00.0"}),
+            sysfs_root=self.root,
+            allowed_cpus={0, 1},
+        ).resolve_all((context(0),))
+
+        self.assertNotEqual(
+            first.visibility_fingerprint,
+            second.visibility_fingerprint,
+        )
+
+    def test_full_fingerprint_includes_provider_contract_metadata(self) -> None:
+        first = GenericAffinityProvider(
+            StaticMappingProvider({0: "01:00.0"}),
+            sysfs_root=self.root,
+            allowed_cpus={0, 1, 2, 3},
+            snapshot_metadata={"adapter": "test.v1"},
+        ).resolve_all((context(0),))
+        second = GenericAffinityProvider(
+            StaticMappingProvider({0: "01:00.0"}),
+            sysfs_root=self.root,
+            allowed_cpus={0, 1, 2, 3},
+            snapshot_metadata={"adapter": "test.v2"},
+        ).resolve_all((context(0),))
+
+        self.assertNotEqual(
+            first.visibility_fingerprint,
+            second.visibility_fingerprint,
+        )
+
+    def test_undeclared_mapper_failure_is_a_contract_error(self) -> None:
+        class BrokenMapper(StaticMappingProvider):
+            def map_all(self, contexts):
+                raise RuntimeError("mapper implementation failure")
+
+        resolver = GenericAffinityProvider(
+            BrokenMapper({0: "01:00.0"}),
+            sysfs_root=self.root,
+            allowed_cpus=set(range(8)),
+        )
+
+        with self.assertRaisesRegex(PluginContractError, "violated its contract"):
+            resolver.resolve_all((context(0),))
+
+    def test_undeclared_topology_failure_is_a_contract_error(self) -> None:
+        resolver = GenericAffinityProvider(
+            StaticMappingProvider({0: "01:00.0"}),
+            sysfs_root=self.root,
+            allowed_cpus=set(range(8)),
+        )
+
+        with (
+            patch(
+                "kunpeng_affinity.policy.batch.analyze_bdf",
+                side_effect=RuntimeError("topology implementation failure"),
+            ),
+            self.assertRaisesRegex(PluginContractError, "violated its result contract"),
+        ):
+            resolver.resolve_all((context(0),))
 
 
 if __name__ == "__main__":
