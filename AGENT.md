@@ -297,3 +297,103 @@ The strongest possible conclusion from this procedure is one of:
 
 Do not claim production support, real model-service support, TP/DP support, or
 SGLang lifecycle support from this test alone.
+
+## 8. Next task: inventory existing real-workload tests
+
+Before starting any real model-service or performance run, inspect the current
+184 environment and report which test assets already exist. This task is
+read-only. It is an inventory task, not a request to start a server or run a
+benchmark.
+
+### Safety boundary
+
+- Do not edit, reformat, or generate files inside the Git checkout.
+- Do not start, stop, restart, or reconfigure any model server, container, GPU
+  workload, or background process.
+- Do not kill processes, even if they appear idle or unrelated.
+- Do not install packages, drivers, Python dependencies, or benchmark tools.
+- Do not run a performance benchmark or send inference requests.
+- Do not print passwords, tokens, SSH details, IP addresses, or complete
+  command lines containing credentials.
+- Redact model paths, user data, and other sensitive values when they are not
+  needed to identify a reusable test asset.
+- Preserve the current checkout and report its exact commit and worktree state.
+
+### Read-only inventory
+
+Inspect, using commands appropriate for the environment:
+
+1. Existing vLLM/SGLang test scripts, benchmark scripts, launch scripts,
+   prompt files, request datasets, and result files under the user's working
+   directories and the selected test container.
+2. Existing model-serving commands and parameters, including model identity,
+   TP/DP size, visible devices, concurrency, input/output length controls,
+   quantization, and any CPU or NUMA constraints. Report sensitive paths in a
+   redacted form.
+3. Available benchmark tools and their versions, such as vLLM benchmark
+   commands, `genai-perf`, `lm-evaluation-harness`, or local project tools.
+   Check availability and versions only; do not execute a workload.
+4. Existing baseline results and their measurement fields. Identify whether
+   they contain TTFT, TPOT/ITL, end-to-end latency, throughput, GPU
+   utilization, CPU utilization, or NUMA/memory-policy observations.
+5. Current container/image information needed to reproduce a test, without
+   changing container state. Include framework version, Python version,
+   accelerator runtime version, and whether a test container is available.
+6. Whether there is an approved idle window and isolated GPU allocation for a
+   future TP=1 service test. Do not create or reserve one during this task.
+
+Use read-only commands such as `find`, `grep`, `sed`, `command -v`, version
+queries, `docker ps`, and `docker inspect` where available. On systems without
+`rg`, use `grep` and `find`. Do not infer that a test is reusable merely from
+its filename; inspect its parameters and result format.
+
+### Classification required in the report
+
+Classify every discovered asset into one of these categories:
+
+- `FUNCTIONAL`: suitable for checking that a real service starts and answers a
+  request;
+- `EXECUTION-CHAIN`: suitable for checking real Worker/EngineCore Hook,
+  rank-to-device mapping, CPU affinity, and NUMA memory policy;
+- `PERFORMANCE-BASELINE`: suitable for comparing plugin-off and plugin-on
+  behavior under the same workload;
+- `REUSABLE-WITH-CHANGES`: useful but missing a parameter, metric, isolation
+  condition, or reproducibility detail;
+- `NOT-REUSABLE`: unrelated, incomplete, or unsafe for this validation.
+
+Keep the three conclusions separate:
+
+```text
+existing business workload
+  -> candidate for performance comparison
+
+plugin-owned validation script
+  -> required for execution-chain correctness
+
+real service request
+  -> required before claiming model-serving support
+```
+
+### Required report format
+
+Return a factual report with:
+
+1. Environment and exact plugin commit inspected.
+2. Existing test assets, with redacted paths, commands, framework versions,
+   and classification.
+3. Existing baseline result files and the metrics they contain.
+4. TP=1 and TP=4 coverage, if present; explicitly state what is absent.
+5. Candidate assets for future functional, execution-chain, and performance
+   validation.
+6. Missing information or blockers.
+7. A minimal recommended next test matrix, without running it.
+8. Commands used and return codes for all meaningful checks.
+
+The report must explicitly answer:
+
+- Can an existing 184 workload be reused for performance comparison?
+- Is there an existing real-service functional test?
+- Is there an existing test that externally verifies Worker CPU affinity and
+  NUMA memory policy?
+- Which tests must be supplied by this plugin repository?
+- What must be fixed or controlled before a TP=1 run?
