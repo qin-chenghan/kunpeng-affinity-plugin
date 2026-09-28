@@ -14,7 +14,8 @@ from kunpeng_affinity.topology.analyzer import normalize_bdf
 ASCEND_VISIBLE_DEVICES = "ASCEND_RT_VISIBLE_DEVICES"
 _BDF_TO_DEVID = "devdrv_sysfs_bdf_to_devid"
 _TABLE_ROW = re.compile(
-    r"^\s*(?P<bdf>[0-9a-fA-F]{4,8}:[0-9a-fA-F]{2}:"
+    r"^\s*(?P<bdf>(?:(?:[0-9a-fA-F]{4}|[0-9a-fA-F]{8}):)?"
+    r"[0-9a-fA-F]{2}:"
     r"[0-9a-fA-F]{2}\.[0-7])\s*(?:-+>|=+>|->)\s*(?P<dev_id>\d+)\s*$"
 )
 

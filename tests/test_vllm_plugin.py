@@ -221,6 +221,21 @@ class VllmPluginTest(unittest.TestCase):
             )
         )
 
+    def test_vllm_0251_vendor_local_version_installs_hook(self) -> None:
+        with patch.object(
+            vllm_plugin,
+            "_vllm_version",
+            return_value="0.25.1+ascend.8.0",
+        ):
+            vllm_plugin.install()
+
+        self.assertTrue(
+            hasattr(
+                self.numa_utils.configure_subprocess,
+                "__kunpeng_affinity_original__",
+            )
+        )
+
     def test_register_is_idempotent(self) -> None:
         with patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"):
             vllm_plugin.install()

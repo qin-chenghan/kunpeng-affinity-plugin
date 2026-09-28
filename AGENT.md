@@ -167,10 +167,11 @@ The automatic candidate scan and this explicit target-BDF run must be reported
 separately. Do not call the automatic scan failure a target-GPU topology
 failure when the explicit run succeeds.
 
-The current validation accepts vLLM `0.23.0` and vendor-local builds whose
-PEP 440 version is based on it, such as `0.23.0+corex.5.0.0`. An upstream
-post-release or development version is still outside the validated contract.
-If a `0.23.0+...` build is rejected, report it as a regression in the version
+The current validation accepts vLLM `0.23.0`, `0.25.1`, and `0.26.0`, plus
+vendor-local builds whose PEP 440 version is based on one of these versions,
+such as `0.25.1+ascend.8.0`. An upstream post-release or development version
+is still outside the validated contract. If a local build based on one of
+these three versions is rejected, report it as a regression in the version
 gate rather than changing the source to bypass the check.
 
 ## 5. Provider and visibility checks
@@ -266,8 +267,8 @@ If a version outside the validated base versions is rejected before installing
 the Hook, classify both spawn stages as `BLOCKED` at version gate. Do not call
 this a Provider or topology failure, and do not bypass the gate by editing
 source or package metadata. Preserve the exact error. A
-`0.23.0+corex.5.0.0` rejection is a regression because vendor-local builds of
-the validated base are expected to pass this gate.
+vendor-local builds based on `0.23.0`, `0.25.1`, or `0.26.0` are expected to
+pass this gate; rejection is a regression.
 
 ## 7. Report format
 
@@ -397,3 +398,58 @@ The report must explicitly answer:
   NUMA memory policy?
 - Which tests must be supplied by this plugin repository?
 - What must be fixed or controlled before a TP=1 run?
+
+## 9. Requested regression after the latest plugin update
+
+Run this regression after updating to the commit that contains the Ascend
+short-BDF parser fix and the vLLM `0.25.1` support entry.
+
+### Required safety boundary
+
+- Do not edit plugin source, tests, configuration templates, or package
+  metadata to make a stage pass.
+- Do not start, stop, restart, or reconfigure an existing model service.
+- Do not run the full environment-changing suite while a GPU workload shares
+  the selected container. In that case run `./validation/iluvatar/run.sh
+  --read-only` and report the dummy-spawn stages as `BLOCKED` or `SKIP`.
+- Only run editable installation and dummy-spawn stages after confirming the
+  container is dedicated and all target GPUs are idle.
+
+### Regression steps
+
+1. Record the exact commit, worktree state, Python version, complete vLLM
+   version, base version, `ixsmi` path, and GPU occupancy.
+2. Run the source tests with the environment's Python 3.10+ interpreter:
+
+   ```bash
+   PYTHON_BIN=python3 ./scripts/test.sh
+   ```
+
+   If `python3` is not 3.10+, resolve the available interpreter and report the
+   exact replacement command. Do not install Python.
+3. Run the Iluvatar Provider single-device, all-device, and visibility-reorder
+   probes. Confirm UUID-to-BDF association remains stable under reordered
+   visibility and that every result is bindable.
+4. If the actual environment contains vLLM `0.25.1` or a vendor-local build
+   based on it, run the source-install, entry-point, forced-generic
+   dummy-spawn, and automatic-fallback dummy-spawn stages in the dedicated
+   idle container. Confirm the Hook is installed, the generic path commits the
+   expected NUMA node, the child CPU set matches the expected CPUs, and the
+   memory policy is correct.
+5. If the actual environment does not contain vLLM `0.25.1`, do not fabricate
+   a version or modify the version gate. Run the available supported-version
+   validation and explicitly report that `0.25.1` runtime integration remains
+   unverified.
+
+### Required regression report
+
+Return command, return code, result status, and log path for every stage. The
+report must separately state:
+
+- whether the three new parser tests pass;
+- whether the actual vLLM version is one of the supported bases;
+- whether `0.25.1` was tested in a real vLLM environment or only by source
+  contract tests;
+- whether any existing GPU service was observed and left untouched;
+- whether the result proves only Provider/topology behavior or also proves
+  controlled vLLM Hook and child-binding behavior.

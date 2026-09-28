@@ -135,6 +135,20 @@ class AscendParsingTest(unittest.TestCase):
             {0: "0000:c1:00.0"},
         )
 
+    def test_parse_short_bdf_to_devid_table(self) -> None:
+        self.assertEqual(
+            parse_bdf_to_devid_table("c1:00.0 ---> 0\n"),
+            {0: "0000:c1:00.0"},
+        )
+
+    def test_parse_mixed_bdf_forms_to_devid_table(self) -> None:
+        self.assertEqual(
+            parse_bdf_to_devid_table(
+                "c1:00.0 ---> 0\n0000:C2:00.0 ---> 1\n"
+            ),
+            {0: "0000:c1:00.0", 1: "0000:c2:00.0"},
+        )
+
     def test_parse_visible_device_ids(self) -> None:
         self.assertEqual(parse_visible_device_ids("1, 4,7"), (1, 4, 7))
 
