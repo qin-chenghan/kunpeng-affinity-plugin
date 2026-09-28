@@ -15,9 +15,11 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from kunpeng_affinity.adapters.vllm_commit import (
-    TRANSACTION_MARKER,
     commit_vllm_nodes,
     release_invalid_vllm_transaction,
+)
+from kunpeng_affinity.adapters.vllm_contract import (
+    TRANSACTION_MARKER,
 )
 from kunpeng_affinity.adapters.vllm_revalidation import (
     validate_inherited_vllm_transaction,
@@ -59,6 +61,16 @@ class _AutomaticAffinityResolution:
     registry: Any | None
     requested_provider: str | None = None
     snapshot_json: str | None = None
+
+
+@dataclass(frozen=True)
+class _VllmCall:
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    parallel_config: Any
+    process_kind: str
+    local_rank: int | None
+    dp_local_rank: int | None
 
 
 def _vllm_version() -> str:
@@ -415,12 +427,7 @@ def _automatic_affinity_context(
     mode: PluginMode,
     force_generic: bool,
     requested_provider: str | None,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    parallel_config: Any,
-    process_kind: str,
-    local_rank: int | None,
-    dp_local_rank: int | None,
+    call: _VllmCall,
 ) -> Iterator[None]:
     platform = _current_platform()
     try:
@@ -430,29 +437,29 @@ def _automatic_affinity_context(
             platform,
             force_generic=force_generic,
             requested_provider=requested_provider,
-            process_kind=process_kind,
-            local_rank=local_rank,
-            dp_local_rank=dp_local_rank,
+            process_kind=call.process_kind,
+            local_rank=call.local_rank,
+            dp_local_rank=call.dp_local_rank,
         )
 
         # Ensure the device-to-BDF view did not change during topology analysis.
         _revalidate_visibility(
             resolution,
             platform,
-            process_kind=process_kind,
-            local_rank=local_rank,
-            dp_local_rank=dp_local_rank,
+            process_kind=call.process_kind,
+            local_rank=call.local_rank,
+            dp_local_rank=call.dp_local_rank,
         )
         # Native results remain owned by vLLM. The plugin must not create a
         # marker or rewrite fields when the native query was usable, or when
         # vLLM deliberately returned an empty result that it owns.
         if resolution.source in {"native", "native-preserved"}:
-            with current(*args, **kwargs):
+            with current(*call.args, **call.kwargs):
                 yield
             return
         # Commit only after the complete result and its visibility are validated.
         commit = commit_vllm_nodes(
-            parallel_config,
+            call.parallel_config,
             list(resolution.nodes),
             visibility_fingerprint=resolution.visibility_fingerprint,
             snapshot_json=resolution.snapshot_json,
@@ -470,8 +477,8 @@ def _automatic_affinity_context(
         )
         # A user-supplied CPU policy still needs vLLM's original context even
         # when the plugin cannot add an automatically discovered NUMA node.
-        if getattr(parallel_config, "numa_bind_cpus", None) is not None:
-            with current(*args, **kwargs):
+        if getattr(call.parallel_config, "numa_bind_cpus", None) is not None:
+            with current(*call.args, **call.kwargs):
                 yield
             return
         yield
@@ -485,7 +492,7 @@ def _automatic_affinity_context(
     )
     try:
         # The original vLLM context still owns process creation and numactl setup.
-        manager = current(*args, **kwargs)
+        manager = current(*call.args, **call.kwargs)
         manager.__enter__()
     except BaseException:
         commit.rollback()
@@ -529,6 +536,14 @@ class VllmAffinityAdapter:
         dp_local_rank = _argument(args, kwargs, 2, "dp_local_rank", None)
         process_kind = _argument(args, kwargs, 3, "process_kind", "worker")
         parallel_config = getattr(vllm_config, "parallel_config", None)
+        call = _VllmCall(
+            args=args,
+            kwargs=kwargs,
+            parallel_config=parallel_config,
+            process_kind=process_kind,
+            local_rank=local_rank,
+            dp_local_rank=dp_local_rank,
+        )
         logger.warning(
             "[kunpeng-affinity] pid=%s vllm=%s process_kind=%s "
             "local_rank=%s dp_local_rank=%s numa_bind=%s",
@@ -552,6 +567,11 @@ class VllmAffinityAdapter:
                     process_kind=process_kind,
                 )
             except AffinityDiscoveryError as exc:
+                if exc.code == "TRANSACTION_IN_PROGRESS":
+                    raise AffinityIntegrationError(
+                        "vLLM affinity transaction is already in progress",
+                        code=exc.code,
+                    ) from exc
                 if self.mode is PluginMode.STRICT:
                     raise _strict_failure(exc) from exc
                 logger.warning(
@@ -572,12 +592,7 @@ class VllmAffinityAdapter:
                 mode=self.mode,
                 force_generic=self.force_generic,
                 requested_provider=self.requested_provider,
-                args=args,
-                kwargs=kwargs,
-                parallel_config=parallel_config,
-                process_kind=process_kind,
-                local_rank=local_rank,
-                dp_local_rank=dp_local_rank,
+                call=call,
             ):
                 yield
             return

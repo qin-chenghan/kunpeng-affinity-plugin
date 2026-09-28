@@ -125,6 +125,23 @@ class IluvatarRuntimeProviderTest(unittest.TestCase):
         self.assertFalse(result.supported)
         self.assertIn("status 1", result.reason or "")
 
+    def test_mapping_reuses_the_probe_inventory_once(self) -> None:
+        calls = 0
+
+        def runner(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return completed(self.output)
+
+        provider = IluvatarRuntimeProvider(FakePlatform, command_runner=runner)
+        contexts = self.contexts()
+
+        for _ in range(2):
+            self.assertTrue(provider.probe(contexts).supported)
+            provider.map_all(contexts)
+
+        self.assertEqual(calls, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

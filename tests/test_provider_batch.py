@@ -286,6 +286,28 @@ class VllmPlatformProviderTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "invalid BDF"):
             provider.map_all((context(1),))
 
+    def test_selected_mapping_reuses_the_probe_sample_once(self) -> None:
+        calls = {"bdf": 0, "physical": 0}
+
+        class CountingPlatform(self.FakePlatform):
+            @classmethod
+            def get_all_gpu_pci_bus_ids(cls):
+                calls["bdf"] += 1
+                return super().get_all_gpu_pci_bus_ids()
+
+            @classmethod
+            def device_id_to_physical_device_id(cls, device_id):
+                calls["physical"] += 1
+                return super().device_id_to_physical_device_id(device_id)
+
+        devices = (context(0), context(1))
+        registry = ProviderRegistry((VllmPlatformProvider(CountingPlatform),))
+        for _ in range(2):
+            provider = registry.select(devices)
+            provider.map_all(devices)
+
+        self.assertEqual(calls, {"bdf": 2, "physical": 4})
+
 
 class GenericAffinityProviderTest(unittest.TestCase):
     def setUp(self) -> None:

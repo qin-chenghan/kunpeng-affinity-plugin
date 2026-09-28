@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 from kunpeng_affinity.adapters.vllm_candidate import (
     resolve_vllm_consumed_device,
     resolve_vllm_visibility_fingerprint,
 )
-from kunpeng_affinity.adapters.vllm_commit import (
+from kunpeng_affinity.adapters.vllm_contract import (
     CAPABILITY_PROFILE,
     CONTRACT_VERSION,
     TRANSACTION_MARKER,
@@ -19,8 +20,12 @@ from kunpeng_affinity.core.errors import AffinityDiscoveryError
 from kunpeng_affinity.core.identity import serialized_snapshot_fingerprint
 
 
-def _invalid(message: str) -> AffinityDiscoveryError:
-    return AffinityDiscoveryError(message, code="INHERITED_RESULT_INVALID")
+def _invalid(
+    message: str,
+    *,
+    code: str = "INHERITED_RESULT_INVALID",
+) -> AffinityDiscoveryError:
+    return AffinityDiscoveryError(message, code=code)
 
 
 def _require(condition: bool, message: str) -> None:
@@ -38,6 +43,11 @@ def _read_marker(
         isinstance(marker, dict),
         "vLLM affinity transaction marker is not a mapping",
     )
+    if marker.get("status") in {"PREPARED", "APPLIED"}:
+        raise _invalid(
+            "vLLM affinity transaction is still being committed",
+            code="TRANSACTION_IN_PROGRESS",
+        )
     _require(
         marker.get("status") == "COMMITTED",
         "vLLM affinity transaction is not committed",
@@ -163,6 +173,7 @@ def validate_inherited_vllm_transaction(
     local_rank: int | None,
     dp_local_rank: int | None,
     process_kind: str,
+    sysfs_root: Path | str = Path("/sys"),
 ) -> None:
     """Re-sample a committed result in the process that will consume it."""
     marker, nodes, snapshot = _read_marker(parallel_config)
@@ -177,6 +188,7 @@ def validate_inherited_vllm_transaction(
             local_rank=local_rank,
             dp_local_rank=dp_local_rank,
             include_topology=True,
+            sysfs_root=sysfs_root,
         )
         if current != marker["visibility_fingerprint"]:
             raise _invalid("vLLM affinity snapshot changed before same-process reuse")
@@ -214,6 +226,7 @@ def validate_inherited_vllm_transaction(
             local_rank=local_rank,
             dp_local_rank=dp_local_rank,
             allowed_cpus=allowed_cpus,
+            sysfs_root=sysfs_root,
         )
         physical_id = (
             None

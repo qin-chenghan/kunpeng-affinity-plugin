@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from kunpeng_affinity.adapters.vllm_contract import CAPABILITY_PROFILE
 from kunpeng_affinity.core.errors import AffinityDiscoveryError
 from kunpeng_affinity.core.models import (
     BatchAffinityResult,
@@ -47,17 +48,20 @@ def vllm_device_count(platform: Any) -> int:
 def create_vllm_provider_registry(
     platform: Any,
     *,
-    providers: Sequence[Any] = (),
     requested_provider: str | None = None,
 ) -> ProviderRegistry:
     """Build providers, preferring direct platform BDF over runtime fallback."""
-    # Register the framework-native mapper first, then add the runtime mapper
-    # only when a direct platform BDF mapping is unavailable or explicitly asked for.
-    registry = ProviderRegistry(providers)
-    registry.register(VllmPlatformProvider(platform))
-    if requested_provider == IluvatarRuntimeProvider.name or not _has_direct_bdf(
-        platform
-    ):
+    registry = ProviderRegistry()
+    if requested_provider == IluvatarRuntimeProvider.name:
+        registry.register(
+            IluvatarRuntimeProvider(
+                platform,
+                ixsmi=os.environ.get("KUNPENG_AFFINITY_IXSMI", "ixsmi"),
+            )
+        )
+    elif requested_provider == VllmPlatformProvider.name or _has_direct_bdf(platform):
+        registry.register(VllmPlatformProvider(platform))
+    else:
         registry.register(
             IluvatarRuntimeProvider(
                 platform,
@@ -134,14 +138,17 @@ def resolve_vllm_visibility_fingerprint(
         dp_local_rank=dp_local_rank,
         allowed_cpus=allowed_cpus,
     )
-    active_registry = registry or create_vllm_provider_registry(platform)
+    active_registry = registry or create_vllm_provider_registry(
+        platform,
+        requested_provider=requested_provider,
+    )
     mapper = active_registry.select(contexts, requested=requested_provider)
     resolver = GenericAffinityProvider(
         mapper,
         sysfs_root=sysfs_root,
         allowed_cpus=allowed_cpus,
         snapshot_metadata={
-            "adapter": "vllm.configure_subprocess.v1",
+            "adapter": CAPABILITY_PROFILE,
         },
     )
     if not include_topology:
@@ -190,7 +197,7 @@ def resolve_vllm_consumed_device(
         mapper,
         sysfs_root=sysfs_root,
         allowed_cpus=allowed_cpus,
-        snapshot_metadata={"adapter": "vllm.configure_subprocess.v1"},
+        snapshot_metadata={"adapter": CAPABILITY_PROFILE},
     )
     mappings, _ = resolver.mapping_snapshot(contexts)
     context = contexts[device_index]
@@ -230,14 +237,17 @@ def resolve_vllm_generic_affinity(
         dp_local_rank=dp_local_rank,
         allowed_cpus=allowed_cpus,
     )
-    active_registry = registry or create_vllm_provider_registry(platform)
+    active_registry = registry or create_vllm_provider_registry(
+        platform,
+        requested_provider=requested_provider,
+    )
     batch = GenericAffinityProvider(
         registry=active_registry,
         requested_provider=requested_provider,
         sysfs_root=sysfs_root,
         allowed_cpus=allowed_cpus,
         snapshot_metadata={
-            "adapter": "vllm.configure_subprocess.v1",
+            "adapter": CAPABILITY_PROFILE,
         },
     ).resolve_all(contexts)
     return batch

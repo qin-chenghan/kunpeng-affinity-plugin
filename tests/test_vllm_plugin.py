@@ -192,12 +192,14 @@ class VllmPluginTest(unittest.TestCase):
                 mode=vllm_plugin.PluginMode.AUTO,
                 force_generic=False,
                 requested_provider=None,
-                args=(),
-                kwargs={},
-                parallel_config=parallel_config,
-                process_kind="worker",
-                local_rank=0,
-                dp_local_rank=None,
+                call=vllm_plugin._VllmCall(
+                    args=(),
+                    kwargs={},
+                    parallel_config=parallel_config,
+                    process_kind="worker",
+                    local_rank=0,
+                    dp_local_rank=None,
+                ),
             ):
                 pass
 
@@ -420,6 +422,34 @@ class VllmPluginTest(unittest.TestCase):
 
         resolver.assert_called_once()
         self.assertEqual(config.parallel_config.numa_bind_nodes, [1])
+
+    def test_in_progress_transaction_is_not_released(self) -> None:
+        marker = {"status": "APPLIED"}
+        config = types.SimpleNamespace(
+            parallel_config=types.SimpleNamespace(
+                numa_bind=True,
+                numa_bind_nodes=[1],
+                numa_bind_cpus=None,
+                _kunpeng_affinity_transaction=marker,
+            )
+        )
+        with (
+            patch.object(vllm_plugin, "_current_platform", return_value=object()),
+            patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
+        ):
+            vllm_plugin.install()
+            with self.assertRaisesRegex(
+                AffinityIntegrationError,
+                "already in progress",
+            ):
+                with self.numa_utils.configure_subprocess(config, 0):
+                    pass
+
+        self.assertIs(
+            config.parallel_config._kunpeng_affinity_transaction,
+            marker,
+        )
+        self.assertEqual(self.calls, [])
 
     def test_explicit_vllm_provider_reaches_resolution(self) -> None:
         config = types.SimpleNamespace(

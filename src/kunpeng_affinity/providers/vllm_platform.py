@@ -24,19 +24,35 @@ class VllmPlatformProvider:
 
     def __init__(self, platform: Any) -> None:
         self.platform = platform
+        self._probe_cache: tuple[
+            tuple[DeviceContext, ...], tuple[DeviceMapping, ...]
+        ] | None = None
 
     def probe(self, contexts: Sequence[DeviceContext]) -> ProbeResult:
+        ordered_contexts = tuple(contexts)
         try:
-            self.map_all(contexts)
+            mappings = self._map_all(ordered_contexts)
         except DeviceMappingError as exc:
+            self._probe_cache = None
             return ProbeResult(
                 provider=self.name,
                 supported=False,
                 reason=str(exc),
             )
+        self._probe_cache = (ordered_contexts, mappings)
         return ProbeResult(provider=self.name, supported=True)
 
     def map_all(self, contexts: Sequence[DeviceContext]) -> tuple[DeviceMapping, ...]:
+        ordered_contexts = tuple(contexts)
+        cached = self._probe_cache
+        self._probe_cache = None
+        if cached is not None and cached[0] == ordered_contexts:
+            return cached[1]
+        return self._map_all(ordered_contexts)
+
+    def _map_all(
+        self, contexts: tuple[DeviceContext, ...]
+    ) -> tuple[DeviceMapping, ...]:
         bus_ids = self._bus_ids()
         mappings: list[DeviceMapping] = []
         seen_bdfs: set[str] = set()

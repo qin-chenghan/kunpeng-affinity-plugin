@@ -9,12 +9,14 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from kunpeng_affinity.adapters.vllm_contract import (
+    CAPABILITY_PROFILE,
+    CONTRACT_VERSION,
+    TRANSACTION_MARKER,
+)
 from kunpeng_affinity.core.errors import AffinityDiscoveryError
 
 
-TRANSACTION_MARKER = "_kunpeng_affinity_transaction"
-CONTRACT_VERSION = "1"
-CAPABILITY_PROFILE = "vllm.configure_subprocess.v1"
 _COMMIT_LOCK = threading.RLock()
 
 

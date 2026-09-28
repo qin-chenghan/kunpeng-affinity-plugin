@@ -17,6 +17,10 @@ from kunpeng_affinity.adapters.vllm_candidate import (
     resolve_vllm_generic_affinity,
     resolve_vllm_visibility_fingerprint,
 )
+from kunpeng_affinity.adapters.vllm_commit import commit_vllm_nodes
+from kunpeng_affinity.adapters.vllm_revalidation import (
+    validate_inherited_vllm_transaction,
+)
 from kunpeng_affinity.core.errors import AffinityDiscoveryError
 from kunpeng_affinity.core.models import NativeStatus
 from kunpeng_affinity.providers import ProviderRegistry, StaticMappingProvider
@@ -112,6 +116,54 @@ class VllmGenericAdapterTest(unittest.TestCase):
             )
 
         provider_type.assert_called_once_with(FakePlatform, ixsmi="/tmp/test-ixsmi")
+
+    def test_explicit_runtime_provider_survives_implicit_registry_creation(
+        self,
+    ) -> None:
+        class FakeRuntimeProvider(StaticMappingProvider):
+            name = "iluvatar-runtime-pci"
+
+            def __init__(self, platform, *, ixsmi):
+                super().__init__({0: "0000:ab:00.0"})
+
+        with (
+            patch(
+                "kunpeng_affinity.adapters.vllm_candidate.IluvatarRuntimeProvider",
+                FakeRuntimeProvider,
+            ),
+            patch(
+                "kunpeng_affinity.adapters.vllm_candidate.os.sched_getaffinity",
+                return_value={9, 10, 11},
+                create=True,
+            ),
+        ):
+            batch = resolve_vllm_generic_affinity(
+                FakePlatform,
+                sysfs_root=self.root,
+                allowed_cpus={9, 10, 11},
+                requested_provider=FakeRuntimeProvider.name,
+            )
+            config = types.SimpleNamespace(numa_bind_nodes=None)
+            commit = commit_vllm_nodes(
+                config,
+                [3],
+                visibility_fingerprint=batch.visibility_fingerprint,
+                snapshot_json=batch.snapshot_json,
+                requested_provider=FakeRuntimeProvider.name,
+            )
+            commit.mark_committed()
+            validate_inherited_vllm_transaction(
+                config,
+                numa_utils=types.SimpleNamespace(),
+                platform=FakePlatform,
+                local_rank=0,
+                dp_local_rank=None,
+                process_kind="worker",
+                sysfs_root=self.root,
+            )
+
+        self.assertTrue(batch.committable)
+        self.assertEqual(batch.ordered_results[0].mapping.source, "explicit-config")
 
     def test_visibility_fingerprint_changes_with_visible_order(self) -> None:
         class ReorderedPlatform:
