@@ -453,3 +453,47 @@ report must separately state:
 - whether any existing GPU service was observed and left untouched;
 - whether the result proves only Provider/topology behavior or also proves
   controlled vLLM Hook and child-binding behavior.
+
+## 10. Requested Iluvatar auto-fallback regression
+
+After updating to the commit that follows `7e7498a`, verify the focused fix for
+the Iluvatar auto-fallback regression. The defect was that an empty native
+`get_auto_numa_nodes()` result was preserved when the platform exposed a BDF
+API, even though vLLM's original subprocess context then failed to resolve a
+NUMA node. The fixed behavior is:
+
+```text
+valid native node list -> preserve the native vLLM path
+empty native result    -> run the generic Provider and Linux topology path
+native query exception -> propagate the original error
+```
+
+Use the existing dedicated, idle `corex5-v0.23.0` validation container. Do not
+stop or alter any unrelated service. Record the exact commit and worktree
+state, then run:
+
+```bash
+PYTHON_BIN=python3 ./scripts/test.sh
+./validation/iluvatar/run.sh
+```
+
+The local validation configuration may be reused only after confirming that
+it still points to the dedicated container's Python, `ixsmi`, explicit target
+BDFs, and a new result directory.
+
+The report must include:
+
+- the full suite stage table and return code;
+- the auto-fallback log path;
+- evidence that `native_numa_query_calls=1`;
+- evidence that `generic_fallback_verified=true`;
+- selected generic NUMA nodes;
+- expected and observed child CPU sets;
+- memory-policy verification;
+- confirmation that forced-generic still passes;
+- confirmation that no model service was started and no unrelated GPU process
+  was changed.
+
+Do not treat source unit tests alone as proof of the fix. The acceptance result
+requires the real vLLM dummy-spawn auto-fallback stage to pass in the Iluvatar
+environment.

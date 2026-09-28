@@ -275,7 +275,7 @@ class VllmGenericAdapterTest(unittest.TestCase):
         with self.assertRaisesRegex(AffinityDiscoveryError, "device count"):
             resolve_vllm_generic_affinity(EmptyPlatform, sysfs_root=self.root)
 
-    def test_empty_native_result_falls_back_only_when_platform_identity_is_uncovered(self) -> None:
+    def test_empty_native_result_falls_back_even_when_platform_exposes_bdfs(self) -> None:
         query = types.SimpleNamespace(get_auto_numa_nodes=lambda: [])
         covered = types.SimpleNamespace(
             get_all_gpu_pci_bus_ids=lambda: {0: "0000:ab:00.0"},
@@ -287,7 +287,7 @@ class VllmGenericAdapterTest(unittest.TestCase):
         )
         self.assertEqual(
             classify_vllm_native_result(query, covered).status,
-            NativeStatus.PRESERVE_NATIVE,
+            NativeStatus.FALLBACK_ALLOWED,
         )
 
     def test_generic_eligibility_uses_vendor_neutral_gates(self) -> None:

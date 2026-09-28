@@ -576,28 +576,31 @@ class VllmPluginTest(unittest.TestCase):
         self.assertIs(captured.exception, native_error)
         generic.assert_not_called()
 
-    def test_native_empty_result_is_preserved_when_platform_is_supported(self) -> None:
+    def test_native_empty_result_falls_back_when_platform_exposes_bdfs(self) -> None:
         class SupportedPlatform:
             get_all_gpu_pci_bus_ids = staticmethod(lambda: {0: "0000:01:00.0"})
 
         with (
             patch(
-                "kunpeng_affinity.adapters.vllm_adapter.classify_vllm_native_result",
-                return_value=vllm_plugin.NativeOutcome(
-                    status=vllm_plugin.NativeStatus.PRESERVE_NATIVE,
-                    failure_code="NATIVE_RESULT_EMPTY",
-                ),
+                "kunpeng_affinity.adapters.vllm_adapter._provider_registry",
+                return_value=object(),
             ),
-            patch.object(vllm_plugin, "_resolve_generic_nodes") as generic,
+            patch.object(
+                vllm_plugin,
+                "_resolve_generic_nodes",
+                return_value=self.resolution([4], "generic"),
+            ) as generic,
         ):
+            self.numa_utils.get_auto_numa_nodes = lambda: None
             resolution = vllm_plugin._resolve_automatic_nodes(
                 self.numa_utils,
                 SupportedPlatform,
                 force_generic=False,
             )
 
-        self.assertEqual(resolution.source, "native-preserved")
-        generic.assert_not_called()
+        self.assertEqual(resolution.source, "generic")
+        self.assertEqual(resolution.nodes, (4,))
+        generic.assert_called_once()
 
     def test_auto_failure_skips_binding_and_continues(self) -> None:
         config = types.SimpleNamespace(

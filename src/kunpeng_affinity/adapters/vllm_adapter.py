@@ -7,7 +7,6 @@ import logging
 import os
 import shutil
 import sys
-from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -171,17 +170,6 @@ def check_vllm_generic_eligibility(
         )
 
 
-def _native_platform_is_uncovered(platform: Any) -> bool:
-    method = getattr(platform, "get_all_gpu_pci_bus_ids", None)
-    if not callable(method):
-        return True
-    try:
-        result = method()
-    except (NotImplementedError, RuntimeError, OSError, ValueError):
-        return True
-    return not isinstance(result, Mapping) or not bool(result)
-
-
 def classify_vllm_native_result(numa_utils: Any, platform: Any) -> NativeOutcome:
     """Classify the native query without converting errors into fallback."""
     query = getattr(numa_utils, "get_auto_numa_nodes", None)
@@ -201,18 +189,9 @@ def classify_vllm_native_result(numa_utils: Any, platform: Any) -> NativeOutcome
             evidence=("vLLM native query raised an exception",),
         )
     if raw_nodes is None or raw_nodes == []:
-        status = (
-            NativeStatus.FALLBACK_ALLOWED
-            if _native_platform_is_uncovered(platform)
-            else NativeStatus.PRESERVE_NATIVE
-        )
         return NativeOutcome(
-            status=status,
-            failure_code=(
-                "NATIVE_QUERY_UNAVAILABLE"
-                if status is NativeStatus.FALLBACK_ALLOWED
-                else "NATIVE_RESULT_EMPTY"
-            ),
+            status=NativeStatus.FALLBACK_ALLOWED,
+            failure_code="NATIVE_QUERY_UNAVAILABLE",
             evidence=("native query returned no usable result",),
         )
     if not isinstance(raw_nodes, list):
@@ -338,14 +317,6 @@ def _resolve_automatic_nodes(
                 + (outcome.failure_code or "NATIVE_RESULT_INVALID"),
                 code=outcome.failure_code or "NATIVE_RESULT_INVALID",
             )
-        if outcome.status is NativeStatus.PRESERVE_NATIVE:
-            return _AutomaticAffinityResolution(
-                nodes=(),
-                source="native-preserved",
-                visibility_fingerprint=None,
-                registry=None,
-                requested_provider=requested_provider,
-            )
         if outcome.status is NativeStatus.VALID:
             nodes = list(outcome.nodes)
             return _AutomaticAffinityResolution(
@@ -453,10 +424,9 @@ def _automatic_affinity_context(
             local_rank=call.local_rank,
             dp_local_rank=call.dp_local_rank,
         )
-        # Native results remain owned by vLLM. The plugin must not create a
-        # marker or rewrite fields when the native query was usable, or when
-        # vLLM deliberately returned an empty result that it owns.
-        if resolution.source in {"native", "native-preserved"}:
+        # Valid native results remain owned by vLLM. The plugin must not create
+        # a marker or rewrite fields when the native query was usable.
+        if resolution.source == "native":
             with current(*call.args, **call.kwargs):
                 yield
             return
