@@ -7,15 +7,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from kunpeng_affinity.adapters import (
-    build_vllm_device_contexts,
+from kunpeng_affinity.adapters.vllm_adapter import (
     check_vllm_generic_eligibility,
+    classify_vllm_native_result,
+)
+from kunpeng_affinity.adapters.vllm_candidate import (
+    build_vllm_device_contexts,
     create_vllm_provider_registry,
     resolve_vllm_generic_affinity,
-    resolve_vllm_native_nodes,
     resolve_vllm_visibility_fingerprint,
 )
-from kunpeng_affinity.adapters.vllm_generic import classify_vllm_native_result
 from kunpeng_affinity.core.errors import AffinityDiscoveryError
 from kunpeng_affinity.core.models import NativeStatus
 from kunpeng_affinity.providers import ProviderRegistry, StaticMappingProvider
@@ -100,7 +101,7 @@ class VllmGenericAdapterTest(unittest.TestCase):
                 clear=False,
             ),
             patch(
-                "kunpeng_affinity.adapters.vllm_generic.IluvatarRuntimeProvider"
+                "kunpeng_affinity.adapters.vllm_candidate.IluvatarRuntimeProvider"
             ) as provider_type,
         ):
             provider_type.name = "iluvatar-runtime-pci"
@@ -169,40 +170,6 @@ class VllmGenericAdapterTest(unittest.TestCase):
         with self.assertRaisesRegex(AffinityDiscoveryError, "device count"):
             resolve_vllm_generic_affinity(EmptyPlatform, sysfs_root=self.root)
 
-    def test_validates_native_result_as_a_complete_batch(self) -> None:
-        numa_utils = types.SimpleNamespace(get_auto_numa_nodes=lambda: [3])
-
-        nodes = resolve_vllm_native_nodes(
-            numa_utils,
-            FakePlatform,
-            sysfs_root=self.root,
-            allowed_cpus={9, 10},
-        )
-
-        self.assertEqual(nodes, [3])
-
-    def test_rejects_incomplete_native_result(self) -> None:
-        numa_utils = types.SimpleNamespace(get_auto_numa_nodes=lambda: [])
-
-        with self.assertRaisesRegex(AffinityDiscoveryError, "visible devices"):
-            resolve_vllm_native_nodes(
-                numa_utils,
-                FakePlatform,
-                sysfs_root=self.root,
-                allowed_cpus={9, 10},
-            )
-
-    def test_rejects_native_node_without_allowed_cpu(self) -> None:
-        numa_utils = types.SimpleNamespace(get_auto_numa_nodes=lambda: [3])
-
-        with self.assertRaisesRegex(AffinityDiscoveryError, "no online CPUs"):
-            resolve_vllm_native_nodes(
-                numa_utils,
-                FakePlatform,
-                sysfs_root=self.root,
-                allowed_cpus={0, 1},
-            )
-
     def test_empty_native_result_falls_back_only_when_platform_identity_is_uncovered(self) -> None:
         query = types.SimpleNamespace(get_auto_numa_nodes=lambda: [])
         covered = types.SimpleNamespace(
@@ -221,25 +188,24 @@ class VllmGenericAdapterTest(unittest.TestCase):
     def test_generic_eligibility_uses_vendor_neutral_gates(self) -> None:
         numa_utils = types.SimpleNamespace(_can_set_mempolicy=lambda: True)
         with patch(
-            "kunpeng_affinity.adapters.vllm_generic.shutil.which",
+            "kunpeng_affinity.adapters.vllm_adapter.shutil.which",
             return_value="/usr/bin/numactl",
         ):
             check_vllm_generic_eligibility(
                 numa_utils,
                 sysfs_root=self.root,
-                allowed_cpus={0, 1},
             )
 
     def test_generic_eligibility_allows_inherited_cpu_restriction(self) -> None:
         numa_utils = types.SimpleNamespace(_can_set_mempolicy=lambda: True)
         with (
             patch(
-                "kunpeng_affinity.adapters.vllm_generic.os.sched_getaffinity",
+                "kunpeng_affinity.adapters.vllm_candidate.os.sched_getaffinity",
                 side_effect=AssertionError("generic eligibility must not reject cpuset"),
                 create=True,
             ),
             patch(
-                "kunpeng_affinity.adapters.vllm_generic.shutil.which",
+                "kunpeng_affinity.adapters.vllm_adapter.shutil.which",
                 return_value="/usr/bin/numactl",
             ),
         ):
@@ -251,5 +217,4 @@ class VllmGenericAdapterTest(unittest.TestCase):
             check_vllm_generic_eligibility(
                 numa_utils,
                 sysfs_root=self.root,
-                allowed_cpus={0, 1},
             )

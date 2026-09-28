@@ -8,8 +8,7 @@ import unittest
 from contextlib import contextmanager
 from unittest.mock import ANY, Mock, patch
 
-from kunpeng_affinity import vllm_plugin
-from kunpeng_affinity import adapters
+from kunpeng_affinity.adapters import vllm_adapter as vllm_plugin
 from kunpeng_affinity.core.identity import serialized_snapshot_fingerprint
 from kunpeng_affinity.core.errors import (
     AffinityDiscoveryError,
@@ -102,7 +101,7 @@ class VllmPluginTest(unittest.TestCase):
             )
         )
         with patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"):
-            vllm_plugin.register()
+            vllm_plugin.install()
 
         with self.assertLogs(vllm_plugin.logger, level="WARNING") as captured:
             with self.numa_utils.configure_subprocess(
@@ -129,10 +128,9 @@ class VllmPluginTest(unittest.TestCase):
         registry = object()
 
         with (
-            patch.object(adapters, "check_vllm_generic_eligibility"),
-            patch.object(
-                adapters,
-                "resolve_vllm_generic_affinity",
+            patch.object(vllm_plugin, "check_vllm_generic_eligibility"),
+            patch(
+                "kunpeng_affinity.adapters.vllm_candidate.resolve_vllm_generic_affinity",
                 return_value=batch,
             ) as resolver,
         ):
@@ -185,10 +183,7 @@ class VllmPluginTest(unittest.TestCase):
                 return_value=self.resolution([3], "generic", "candidate"),
             ),
             patch.object(vllm_plugin, "_revalidate_visibility"),
-            patch(
-                "kunpeng_affinity.adapters.vllm_commit.commit_vllm_nodes",
-                return_value=commit,
-            ),
+            patch.object(vllm_plugin, "commit_vllm_nodes", return_value=commit),
             self.assertRaisesRegex(RuntimeError, "marker conflict"),
         ):
             with vllm_plugin._automatic_affinity_context(
@@ -215,7 +210,7 @@ class VllmPluginTest(unittest.TestCase):
             "_vllm_version",
             return_value="0.23.0+corex.5.0.0",
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
 
         self.assertTrue(
             hasattr(
@@ -226,9 +221,9 @@ class VllmPluginTest(unittest.TestCase):
 
     def test_register_is_idempotent(self) -> None:
         with patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"):
-            vllm_plugin.register()
+            vllm_plugin.install()
             first_wrapper = self.numa_utils.configure_subprocess
-            vllm_plugin.register()
+            vllm_plugin.install()
 
         self.assertIs(self.numa_utils.configure_subprocess, first_wrapper)
 
@@ -239,7 +234,7 @@ class VllmPluginTest(unittest.TestCase):
 
         self.numa_utils.configure_subprocess = incompatible
         with self.assertLogs(vllm_plugin.logger, level="WARNING") as captured:
-            vllm_plugin.register()
+            vllm_plugin.install()
 
         self.assertIs(self.numa_utils.configure_subprocess, incompatible)
         self.assertIn("Hook not installed", "\n".join(captured.output))
@@ -255,7 +250,7 @@ class VllmPluginTest(unittest.TestCase):
                 AffinityIntegrationError,
                 "missing parameters",
             ):
-                vllm_plugin.register()
+                vllm_plugin.install()
 
     def test_forced_generic_path_commits_nodes_before_delegating(self) -> None:
         config = types.SimpleNamespace(
@@ -277,7 +272,7 @@ class VllmPluginTest(unittest.TestCase):
             ) as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.numa_utils.configure_subprocess(config, 0, dp_local_rank=2):
                 pass
 
@@ -302,7 +297,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_resolve_automatic_nodes") as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.numa_utils.configure_subprocess(config, 0):
                 pass
 
@@ -324,7 +319,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_resolve_automatic_nodes") as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.numa_utils.configure_subprocess(config, 0):
                 pass
 
@@ -354,7 +349,7 @@ class VllmPluginTest(unittest.TestCase):
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.assertRaisesRegex(
                 AffinityIntegrationError,
                 "DEVICE_MAPPING_MISSING",
@@ -382,7 +377,7 @@ class VllmPluginTest(unittest.TestCase):
             ) as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.numa_utils.configure_subprocess(config, 0):
                 pass
 
@@ -410,14 +405,14 @@ class VllmPluginTest(unittest.TestCase):
             ) as resolver,
             patch.object(vllm_plugin, "_revalidate_visibility"),
             patch(
-                "kunpeng_affinity.adapters.vllm_generic.resolve_vllm_visibility_fingerprint",
+                "kunpeng_affinity.adapters.vllm_revalidation.resolve_vllm_visibility_fingerprint",
                 side_effect=lambda *args, **kwargs: config.parallel_config._kunpeng_affinity_transaction[
                     "visibility_fingerprint"
                 ],
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.numa_utils.configure_subprocess(config, 0):
                 pass
             with self.numa_utils.configure_subprocess(config, 0):
@@ -447,7 +442,7 @@ class VllmPluginTest(unittest.TestCase):
             ) as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.numa_utils.configure_subprocess(config, 0):
                 pass
 
@@ -459,7 +454,7 @@ class VllmPluginTest(unittest.TestCase):
     def test_native_capability_gap_falls_back_to_generic(self) -> None:
         with (
             patch(
-                "kunpeng_affinity.adapters.classify_vllm_native_result",
+                "kunpeng_affinity.adapters.vllm_adapter.classify_vllm_native_result",
                 return_value=vllm_plugin.NativeOutcome(
                     status=vllm_plugin.NativeStatus.FALLBACK_ALLOWED,
                     failure_code="NATIVE_QUERY_UNAVAILABLE",
@@ -487,7 +482,7 @@ class VllmPluginTest(unittest.TestCase):
         native_error = RuntimeError("native query failed")
         with (
             patch(
-                "kunpeng_affinity.adapters.classify_vllm_native_result",
+                "kunpeng_affinity.adapters.vllm_adapter.classify_vllm_native_result",
                 return_value=vllm_plugin.NativeOutcome(
                     status=vllm_plugin.NativeStatus.ERROR,
                     original_error=native_error,
@@ -512,7 +507,7 @@ class VllmPluginTest(unittest.TestCase):
 
         with (
             patch(
-                "kunpeng_affinity.adapters.classify_vllm_native_result",
+                "kunpeng_affinity.adapters.vllm_adapter.classify_vllm_native_result",
                 return_value=vllm_plugin.NativeOutcome(
                     status=vllm_plugin.NativeStatus.PRESERVE_NATIVE,
                     failure_code="NATIVE_RESULT_EMPTY",
@@ -549,7 +544,7 @@ class VllmPluginTest(unittest.TestCase):
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.assertLogs(vllm_plugin.logger, level="WARNING") as captured:
                 with self.numa_utils.configure_subprocess(config, 0):
                     pass
@@ -577,7 +572,7 @@ class VllmPluginTest(unittest.TestCase):
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.numa_utils.configure_subprocess(config, 0):
                 pass
 
@@ -614,7 +609,7 @@ class VllmPluginTest(unittest.TestCase):
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.numa_utils.configure_subprocess(config, 0):
                 pass
 
@@ -641,7 +636,7 @@ class VllmPluginTest(unittest.TestCase):
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.assertRaisesRegex(AffinityIntegrationError, "NUMA_UNKNOWN"):
                 with self.numa_utils.configure_subprocess(config, 0):
                     pass
@@ -662,7 +657,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_resolve_automatic_nodes") as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.numa_utils.configure_subprocess(config, 0):
                 pass
 
@@ -689,7 +684,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_resolve_automatic_nodes") as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.numa_utils.configure_subprocess(config, 0):
                 pass
 
@@ -715,7 +710,7 @@ class VllmPluginTest(unittest.TestCase):
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.numa_utils.configure_subprocess(config, 0):
                 pass
 
@@ -751,7 +746,7 @@ class VllmPluginTest(unittest.TestCase):
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
             with self.assertRaisesRegex(RuntimeError, "numactl execution failed"):
                 with self.numa_utils.configure_subprocess(config, 0):
                     pass
@@ -764,7 +759,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
             with self.assertRaisesRegex(PluginConfigError, "expected off"):
-                vllm_plugin.register()
+                vllm_plugin.install()
 
     def test_exact_cpu_policy_is_rejected_before_hook_installation(self) -> None:
         original = self.numa_utils.configure_subprocess
@@ -772,7 +767,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.dict(os.environ, {"KUNPENG_AFFINITY_CPU_POLICY": "exact"}),
             self.assertRaisesRegex(AffinityIntegrationError, "exact CPU policy"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
 
         self.assertIs(self.numa_utils.configure_subprocess, original)
 
@@ -782,7 +777,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.dict(os.environ, {"KUNPENG_AFFINITY_PROVIDER": "missing"}),
             self.assertRaisesRegex(AffinityIntegrationError, "not registered"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
 
         self.assertIs(self.numa_utils.configure_subprocess, original)
 
@@ -792,7 +787,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_vllm_version", return_value="9.9.9"),
             self.assertLogs(vllm_plugin.logger, level="WARNING") as captured,
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
 
         self.assertIs(self.numa_utils.configure_subprocess, original)
         self.assertIn("Hook not installed", "\n".join(captured.output))
@@ -807,7 +802,7 @@ class VllmPluginTest(unittest.TestCase):
             ),
             self.assertLogs(vllm_plugin.logger, level="WARNING"),
         ):
-            vllm_plugin.register()
+            vllm_plugin.install()
 
         self.assertIs(self.numa_utils.configure_subprocess, original)
 
@@ -820,7 +815,7 @@ class VllmPluginTest(unittest.TestCase):
                 AffinityIntegrationError,
                 "unsupported vLLM version",
             ):
-                vllm_plugin.register()
+                vllm_plugin.install()
 
 
 if __name__ == "__main__":
