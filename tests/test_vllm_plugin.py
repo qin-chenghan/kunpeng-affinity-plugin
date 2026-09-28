@@ -481,6 +481,36 @@ class VllmPluginTest(unittest.TestCase):
             "vllm-platform-pci",
         )
 
+    def test_explicit_ascend_provider_reaches_resolution(self) -> None:
+        config = types.SimpleNamespace(
+            parallel_config=types.SimpleNamespace(
+                numa_bind=True,
+                numa_bind_nodes=None,
+                numa_bind_cpus=None,
+            )
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {"KUNPENG_AFFINITY_PROVIDER": "ascend-sysfs-pci"},
+            ),
+            patch.object(vllm_plugin, "_current_platform", return_value=object()),
+            patch.object(
+                vllm_plugin,
+                "_resolve_automatic_nodes",
+                return_value=self.resolution([1], "native"),
+            ) as resolver,
+            patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
+        ):
+            vllm_plugin.install()
+            with self.numa_utils.configure_subprocess(config, 0):
+                pass
+
+        self.assertEqual(
+            resolver.call_args.kwargs["requested_provider"],
+            "ascend-sysfs-pci",
+        )
+
     def test_native_capability_gap_falls_back_to_generic(self) -> None:
         with (
             patch(

@@ -620,15 +620,11 @@ def install(*, mode: PluginMode | None = None) -> None:
         )
     requested_provider = None if config.provider == "auto" else config.provider
     if requested_provider is not None:
-        from kunpeng_affinity.providers import (
-            IluvatarRuntimeProvider,
-            VllmPlatformProvider,
+        from kunpeng_affinity.adapters.vllm_candidate import (
+            VLLM_PROVIDER_NAMES,
         )
 
-        if requested_provider not in {
-            VllmPlatformProvider.name,
-            IluvatarRuntimeProvider.name,
-        }:
+        if requested_provider not in VLLM_PROVIDER_NAMES:
             raise AffinityIntegrationError(
                 f"provider {requested_provider!r} is not registered for vLLM",
                 code="PROVIDER_NOT_FOUND",

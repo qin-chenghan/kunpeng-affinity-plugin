@@ -23,7 +23,11 @@ from kunpeng_affinity.adapters.vllm_revalidation import (
 )
 from kunpeng_affinity.core.errors import AffinityDiscoveryError
 from kunpeng_affinity.core.models import NativeStatus
-from kunpeng_affinity.providers import ProviderRegistry, StaticMappingProvider
+from kunpeng_affinity.providers import (
+    AscendSysfsProvider,
+    ProviderRegistry,
+    StaticMappingProvider,
+)
 
 
 class FakePlatform:
@@ -116,6 +120,55 @@ class VllmGenericAdapterTest(unittest.TestCase):
             )
 
         provider_type.assert_called_once_with(FakePlatform, ixsmi="/tmp/test-ixsmi")
+
+    def test_explicit_ascend_provider_uses_sysfs_mapping(self) -> None:
+        attribute = (
+            self.root
+            / "bus/pci/devices/0000:ab:00.0/devdrv_sysfs_bdf_to_devid"
+        )
+        attribute.write_text("0000:ab:00.0 ---> 0\n", encoding="ascii")
+        with patch.dict(
+            os.environ,
+            {"ASCEND_RT_VISIBLE_DEVICES": "0"},
+            clear=False,
+        ):
+            registry = create_vllm_provider_registry(
+                FakePlatform,
+                requested_provider=AscendSysfsProvider.name,
+                sysfs_root=self.root,
+            )
+            provider = registry.select(
+                (types.SimpleNamespace(logical_device_id=0),),
+                requested=AscendSysfsProvider.name,
+            )
+
+        self.assertIsInstance(provider, AscendSysfsProvider)
+        self.assertEqual(provider.sysfs_root, self.root)
+
+    def test_ascend_provider_resolves_complete_linux_affinity(self) -> None:
+        attribute = (
+            self.root
+            / "bus/pci/devices/0000:ab:00.0/devdrv_sysfs_bdf_to_devid"
+        )
+        attribute.write_text("0000:ab:00.0 ---> 4\n", encoding="ascii")
+        with patch.dict(
+            os.environ,
+            {"ASCEND_RT_VISIBLE_DEVICES": "4"},
+            clear=False,
+        ):
+            batch = resolve_vllm_generic_affinity(
+                FakePlatform,
+                sysfs_root=self.root,
+                allowed_cpus={9, 10, 11},
+                requested_provider=AscendSysfsProvider.name,
+            )
+
+        self.assertTrue(batch.committable)
+        result = batch.ordered_results[0]
+        self.assertEqual(result.mapping.physical_device_id, 4)
+        self.assertEqual(result.mapping.pci_bdf, "0000:ab:00.0")
+        self.assertEqual(result.affinity.numa_node, 3)
+        self.assertEqual(result.affinity.target_cpus, {9, 10, 11})
 
     def test_explicit_runtime_provider_survives_implicit_registry_creation(
         self,

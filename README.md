@@ -75,6 +75,16 @@ The Iluvatar Provider executes `ixsmi` by default. Set
 nonstandard location. The staged validation runner resolves `IXSMI_BIN` once
 and passes that path to both Provider probes and controlled vLLM spawn checks.
 
+The `ascend-sysfs-pci` Provider is selected when vLLM has no direct BDF API and
+`ASCEND_RT_VISIBLE_DEVICES` is present. It maps the ordered visible physical
+device IDs through the read-only Ascend sysfs attribute
+`devdrv_sysfs_bdf_to_devid`, then hands the resulting BDFs to the common Linux
+PCIe/NUMA analyzer. It does not import `torch_npu`, invoke `npu-smi`, call
+DCMI, or infer an identity from `/dev/davinciN`. If the visibility variable or
+the sysfs mapping is unavailable or inconsistent, the Provider fails closed.
+For a read-only target check, run `demo/probe-ascend-provider.sh` inside the
+vLLM Ascend environment.
+
 `KUNPENG_AFFINITY_MODE` controls failure behavior:
 
 | Value | Behavior |

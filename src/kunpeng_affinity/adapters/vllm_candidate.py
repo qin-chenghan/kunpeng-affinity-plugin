@@ -16,11 +16,20 @@ from kunpeng_affinity.core.models import (
 )
 from kunpeng_affinity.policy import GenericAffinityProvider
 from kunpeng_affinity.providers import (
+    AscendSysfsProvider,
     IluvatarRuntimeProvider,
     ProviderRegistry,
     VllmPlatformProvider,
 )
 from kunpeng_affinity.topology.analyzer import analyze_bdf
+
+VLLM_PROVIDER_NAMES = frozenset(
+    {
+        AscendSysfsProvider.name,
+        IluvatarRuntimeProvider.name,
+        VllmPlatformProvider.name,
+    }
+)
 
 
 def vllm_device_count(platform: Any) -> int:
@@ -49,10 +58,15 @@ def create_vllm_provider_registry(
     platform: Any,
     *,
     requested_provider: str | None = None,
+    sysfs_root: Path | str = Path("/sys"),
 ) -> ProviderRegistry:
     """Build providers, preferring direct platform BDF over runtime fallback."""
     registry = ProviderRegistry()
-    if requested_provider == IluvatarRuntimeProvider.name:
+    if requested_provider == AscendSysfsProvider.name:
+        registry.register(
+            AscendSysfsProvider(sysfs_root=sysfs_root)
+        )
+    elif requested_provider == IluvatarRuntimeProvider.name:
         registry.register(
             IluvatarRuntimeProvider(
                 platform,
@@ -61,6 +75,10 @@ def create_vllm_provider_registry(
         )
     elif requested_provider == VllmPlatformProvider.name or _has_direct_bdf(platform):
         registry.register(VllmPlatformProvider(platform))
+    elif os.environ.get("ASCEND_RT_VISIBLE_DEVICES") is not None:
+        registry.register(
+            AscendSysfsProvider(sysfs_root=sysfs_root)
+        )
     else:
         registry.register(
             IluvatarRuntimeProvider(
@@ -141,6 +159,7 @@ def resolve_vllm_visibility_fingerprint(
     active_registry = registry or create_vllm_provider_registry(
         platform,
         requested_provider=requested_provider,
+        sysfs_root=sysfs_root,
     )
     mapper = active_registry.select(contexts, requested=requested_provider)
     resolver = GenericAffinityProvider(
@@ -191,6 +210,7 @@ def resolve_vllm_consumed_device(
     registry = create_vllm_provider_registry(
         platform,
         requested_provider=requested_provider,
+        sysfs_root=sysfs_root,
     )
     mapper = registry.select(contexts, requested=requested_provider)
     resolver = GenericAffinityProvider(
@@ -240,6 +260,7 @@ def resolve_vllm_generic_affinity(
     active_registry = registry or create_vllm_provider_registry(
         platform,
         requested_provider=requested_provider,
+        sysfs_root=sysfs_root,
     )
     batch = GenericAffinityProvider(
         registry=active_registry,
