@@ -454,13 +454,16 @@ report must separately state:
 - whether the result proves only Provider/topology behavior or also proves
   controlled vLLM Hook and child-binding behavior.
 
-## 10. Requested Iluvatar auto-fallback regression
+## 10. Completed Iluvatar auto-fallback regression
 
-After updating to the commit that follows `7e7498a`, verify the focused fix for
-the Iluvatar auto-fallback regression. The defect was that an empty native
-`get_auto_numa_nodes()` result was preserved when the platform exposed a BDF
-API, even though vLLM's original subprocess context then failed to resolve a
-NUMA node. The fixed behavior is:
+The focused Iluvatar auto-fallback regression has been re-run after the fix
+following `7e7498a` and is now **PASS** in the dedicated vLLM `0.23.0+corex`
+environment. Do not report this stage as pending or repeat it unless a later
+change touches the vLLM decision path.
+
+The defect was that an empty native `get_auto_numa_nodes()` result was
+preserved when the platform exposed a BDF API, even though vLLM's original
+subprocess context then failed to resolve a NUMA node. The fixed behavior is:
 
 ```text
 valid native node list -> preserve the native vLLM path
@@ -468,32 +471,122 @@ empty native result    -> run the generic Provider and Linux topology path
 native query exception -> propagate the original error
 ```
 
-Use the existing dedicated, idle `corex5-v0.23.0` validation container. Do not
-stop or alter any unrelated service. Record the exact commit and worktree
-state, then run:
+The accepted evidence includes:
 
-```bash
-PYTHON_BIN=python3 ./scripts/test.sh
-./validation/iluvatar/run.sh
-```
-
-The local validation configuration may be reused only after confirming that
-it still points to the dedicated container's Python, `ixsmi`, explicit target
-BDFs, and a new result directory.
-
-The report must include:
-
-- the full suite stage table and return code;
-- the auto-fallback log path;
-- evidence that `native_numa_query_calls=1`;
-- evidence that `generic_fallback_verified=true`;
-- selected generic NUMA nodes;
+- the complete validation suite passing;
+- `native_numa_query_calls=1`;
+- `generic_fallback_verified=true`;
+- generic NUMA node selection;
 - expected and observed child CPU sets;
 - memory-policy verification;
-- confirmation that forced-generic still passes;
-- confirmation that no model service was started and no unrelated GPU process
-  was changed.
+- forced-generic still passing;
+- no model service started and no unrelated GPU process changed.
 
-Do not treat source unit tests alone as proof of the fix. The acceptance result
-requires the real vLLM dummy-spawn auto-fallback stage to pass in the Iluvatar
-environment.
+## 11. Remaining validation matrix
+
+The following items remain open. A test report must distinguish real runtime
+evidence from source-level contract tests and must not infer one framework's
+result from another framework.
+
+### Required vLLM validation
+
+1. **vLLM 0.25.1 real Hook integration**
+
+   Ascend 0.25.1 Provider mapping has passed, but the complete plugin path has
+   not been proven in an isolated environment:
+
+   ```text
+   entry point
+     -> configure_subprocess Hook
+     -> Ascend Provider
+     -> generic NUMA fallback
+     -> original numactl wrapper
+     -> dummy Worker CPU and memory policy
+   ```
+
+   Use a dedicated container or isolated GPUs. Do not inject the plugin into a
+   shared TP=8 production container.
+
+2. **Real single-GPU vLLM service**
+
+   Start an isolated TP=1 service with the plugin disabled and enabled. Send a
+   real request in both cases, then collect:
+
+   - service startup result;
+   - request result;
+   - Worker CPU affinity;
+   - NUMA memory policy;
+   - plugin decision logs.
+
+   Dummy spawn success alone does not prove model-service support.
+
+3. **vLLM multi-process and parallel execution**
+
+   In an isolated environment, cover at least one multi-GPU TP case and the
+   relevant EngineCore/Worker path. If DP is in scope, also cover a DP shard.
+   Verify:
+
+   - each logical device maps to the intended BDF;
+   - each Worker receives the correct NUMA node and CPU set;
+   - EngineCore receives the intended CPU superset;
+   - visibility fingerprints survive process creation and revalidation;
+   - a partial or changed mapping does not commit a partial result.
+
+### Required SGLang validation
+
+4. **SGLang 0.5.18 real single-GPU service**
+
+   Source-level SGLang tests pass, but no real SGLang service lifecycle has
+   been accepted yet. Validate plugin discovery, the NUMA query Hook, native
+   empty-result fallback, original process launch, Worker CPU affinity, memory
+   policy, and one real request.
+
+5. **SGLang multi-GPU and launcher coverage**
+
+   After TP=1 passes, validate the SGLang multi-GPU/TP path and DP path if they
+   are in scope. Validate Controller/Worker and Ray or external-launcher paths
+   separately; do not infer their support from the ordinary Engine path.
+
+6. **Ascend Provider coverage in SGLang**
+
+   The Ascend Provider is currently wired into the vLLM assembly path. The
+   SGLang Provider selection path currently covers `auto`,
+   `sglang-runtime-pci`, and `iluvatar-runtime-pci`; `ascend-sysfs-pci` has not
+   been wired into SGLang. Decide whether Ascend+SGLang is part of the first
+   delivery. If yes, implement and validate that adapter path before claiming
+   Ascend support for SGLang.
+
+### Optional validation and delivery closure
+
+7. **Performance baseline**
+
+   If the delivery must claim a performance benefit, compare plugin-off and
+   plugin-on under the same model, prompts, concurrency, visible devices, and
+   CPU constraints. Record TTFT, token latency, end-to-end latency, throughput,
+   CPU/GPU utilization, and NUMA policy. Functional tests do not establish a
+   performance improvement.
+
+8. **Real PCIe Switch hardware**
+
+   Fixture tests already cover direct, single-level, and multi-level paths. If
+   the acceptance target requires physical Switch hardware, preserve one real
+   host report containing the complete PCIe parent path, Switch ancestors,
+   NUMA evidence, and target CPU set.
+
+9. **Documentation synchronization**
+
+   Before release, update the formal delivery design with the current commit,
+   test count, supported vLLM baselines, Ascend Provider status, and the now
+   passing Iluvatar auto-fallback result. Do not leave old status tables or old
+   commit references as the delivery state.
+
+### Required status wording
+
+Every future report must state separately:
+
+- what is proven by source tests;
+- what is proven by Provider/topology probes;
+- what is proven by controlled framework dummy spawn;
+- what is proven by a real model service;
+- what remains unverified;
+- whether any existing GPU workload was observed and left untouched.
