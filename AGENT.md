@@ -590,3 +590,284 @@ Every future report must state separately:
 - what is proven by a real model service;
 - what remains unverified;
 - whether any existing GPU workload was observed and left untouched.
+
+## 12. Complete 184 self-validation task for acceptance evidence
+
+This section is the current end-to-end task brief. Validate the checkout at
+commit `f4591ea` or a later commit explicitly identified in the report. The
+goal is to produce an acceptance-oriented self-validation report, not merely a
+unit-test transcript. The report must separate source-level evidence,
+controlled framework evidence, real-service evidence, correctness evidence,
+and performance evidence.
+
+For this section only, the earlier inventory-only restrictions are superseded
+after Stage A preflight: an isolated validation service may be started and
+stopped by the test Agent, but only on newly allocated idle resources. The
+earlier prohibition on touching existing services, shared containers, or busy
+GPUs remains absolute.
+
+### 12.1 Safety and authority boundary
+
+- Work only in the user's plugin checkout and a dedicated validation result
+  directory outside that checkout.
+- Do not modify plugin source, tests, validation scripts, package metadata, or
+  framework source to make a stage pass. Do not commit or push.
+- Start no test until current containers, processes, GPU occupancy, ports, and
+  existing model services have been inventoried.
+- Never stop, restart, kill, or reconfigure an existing service or process.
+- Real-service and performance stages may run only on GPUs confirmed idle and
+  isolated from existing workloads. If isolation is unavailable, mark the
+  stage `BLOCKED`; do not borrow a busy GPU.
+- Installing the plugin source in a dedicated validation container is allowed.
+  Do not install drivers, kernel modules, system packages, or unrelated Python
+  dependencies. Record any pre-existing image/container and tool versions.
+- Do not expose passwords, tokens, private paths, IP addresses, user prompts,
+  model credentials, or complete credential-bearing commands in the report.
+- Preserve every command, return code, stdout/stderr log, process PID, and
+  artifact path needed to reproduce the result.
+
+### 12.2 Report directory and status vocabulary
+
+Create a unique result directory outside the Git checkout, for example:
+
+```text
+/home/qch/kunpeng-affinity-results/self-validation-<timestamp>/
+```
+
+Use this layout where the corresponding stage is executed:
+
+```text
+report.md
+environment.txt
+workload-inventory.txt
+commands.txt
+source-tests/
+topology-provider/
+hook-dummy/
+vllm-service-off/
+vllm-service-on/
+correctness/
+performance/
+sglang/
+```
+
+Every stage must be reported as exactly one of `PASS`, `FAIL`, `BLOCKED`, or
+`SKIP`, with the command, return code, reason, and evidence path. `BLOCKED`
+means the stage was required but could not be safely or technically run;
+`SKIP` means it is outside the available acceptance scope and the reason is
+explicit. A missing log is not a pass.
+
+### 12.3 Stage A: environment and workload preflight
+
+Record read-only facts before any installation or service launch:
+
+- exact plugin commit, branch, worktree state, and source location;
+- host kernel, architecture, CPU topology, NUMA nodes, online CPUs, and
+  current process cpuset/affinity;
+- container name/image, Python version, vLLM/SGLang versions, accelerator
+  runtime and driver versions;
+- `ixsmi` GPU inventory, UUID, PCI BDF, visible-device environment, and GPU
+  occupancy/processes;
+- listening ports and existing model services;
+- available `numactl`, `taskset`, `nsys`/`perf`/vendor monitoring tools, and
+  their versions, without starting a benchmark;
+- whether an isolated idle GPU and a dedicated container are available for
+  TP=1 and multi-GPU tests.
+
+Classify existing workloads before reuse:
+
+```text
+FUNCTIONAL
+EXECUTION-CHAIN
+PERFORMANCE-BASELINE
+REUSABLE-WITH-CHANGES
+NOT-REUSABLE
+```
+
+Do not start a service or send an inference request in this stage.
+
+### 12.4 Stage B: source and static baseline
+
+Run the repository's source test entry point with the environment's Python:
+
+```bash
+PYTHON_BIN=python3 ./scripts/test.sh
+```
+
+Also run source compilation and whitespace checks. If `coverage.py` is already
+available, collect statement and branch coverage without adding a dependency.
+Otherwise use the standard-library `trace` command or report that branch
+coverage is unavailable. Record the test count, coverage method, and coverage
+by vLLM adapter module. The current local reference is 159 passing tests, but
+the result on 184 must be measured rather than copied.
+
+### 12.5 Stage C: topology and Provider evidence
+
+Run the read-only generic topology probe and the Iluvatar Provider probes. Use
+explicit target GPU BDFs when automatic candidate discovery sees unrelated PCI
+functions. Record for every visible GPU:
+
+```text
+logical device -> runtime identity -> physical identity -> canonical BDF
+  -> complete PCIe parent path -> Switch ancestors -> NUMA node
+  -> online CPUs ∩ allowed CPUs -> target CPUs -> bindable status
+```
+
+Verify both default visibility and a safe reordered visibility case. The
+reordered case must preserve UUID-to-BDF association and must not use vendor
+tool row order as the logical mapping. A partial mapping, duplicate identity,
+unknown NUMA node, or empty CPU intersection must be reported as a failed
+batch, never as a successful partial result.
+
+### 12.6 Stage D: controlled vLLM Hook and binding chain
+
+Run the complete Iluvatar validation suite for the current commit in a
+dedicated idle container. At minimum collect:
+
+1. source tests and source installation;
+2. entry-point metadata and source import location;
+3. forced-generic dummy spawn;
+4. native-empty automatic fallback dummy spawn;
+5. expected child CPU affinity and `numactl --show` memory policy;
+6. Hook logs proving the entry point ran in the relevant process;
+7. child start/exit and absence of residue after completion.
+
+The forced-generic path must prove zero native NUMA query calls. The fallback
+path must prove a native empty result, exactly one controlled fallback, and the
+same child CPU/memory-policy evidence. Report the full chain rather than only
+the runner return code.
+
+### 12.7 Stage E: real vLLM TP=1 functional validation
+
+Only if Stage A confirms an isolated idle GPU and a reproducible model image,
+run the same TP=1 service twice:
+
+```text
+run A: plugin disabled
+run B: plugin enabled, automatic generic path observable
+```
+
+Keep model, image, visible device, request parameters, seeds, tokenizer,
+maximum output tokens, and service settings identical. Do not alter any
+existing service. Collect:
+
+- startup and readiness result;
+- one fixed deterministic request and HTTP response;
+- EngineCore/Worker PIDs and process kinds;
+- plugin discovery and decision logs;
+- each relevant PID's `Cpus_allowed_list`;
+- `numactl --show`, `Mems_allowed_list`, and memory-policy evidence;
+- selected Provider, BDF, NUMA node, and expected/observed CPU set;
+- clean service shutdown and no leftover test processes.
+
+The plugin-disabled run is a control only. It does not prove that the plugin
+was loaded or that binding occurred. A service response alone does not prove
+the execution chain.
+
+### 12.8 Stage F: inference result consistency
+
+Use the exact same fixed request set against the plugin-disabled and
+plugin-enabled TP=1 services. Prefer deterministic generation (`temperature=0`
+or greedy), fixed seed, fixed tokenizer and fixed output limit. Save redacted
+JSONL outputs and a machine-readable comparison.
+
+Compare, at minimum:
+
+- HTTP success and error counts;
+- empty/error/truncated responses;
+- generated token counts;
+- exact output match where the runtime is deterministic;
+- normalized or task-specific match only when nondeterminism is documented.
+
+Do not call this a model-accuracy benchmark unless a defined evaluation set
+and metric are used. For this plugin, it is primarily an inference-result
+regression check proving that NUMA binding does not alter observable output.
+
+### 12.9 Stage G: real vLLM multi-process and parallel validation
+
+If isolated hardware permits, run one multi-GPU TP case after TP=1 passes. If
+the environment and acceptance scope include DP, run one DP case separately.
+Collect and correlate PIDs, local ranks, logical devices, BDFs, NUMA nodes,
+CPU sets, and memory policy. Verify:
+
+- every Worker maps to the intended visible device;
+- EngineCore receives the intended process-level policy;
+- spawn inheritance marker validation succeeds;
+- visibility fingerprints remain valid after process creation;
+- a changed or incomplete mapping prevents partial commit;
+- service startup and one fixed request succeed.
+
+Do not infer TP/DP support from the dummy-spawn test or from TP=1.
+
+### 12.10 Stage H: performance A/B validation
+
+Only run performance tests after functional and consistency stages pass and an
+idle allocation is approved. Use plugin-off and plugin-on under the same
+container, model, visible devices, TP/DP, CPU constraints, request set,
+concurrency, input/output token limits, warmup count, duration, and scheduler
+settings. Prefer an existing reusable workload from Stage A; otherwise report
+that no performance baseline is available instead of inventing a business
+workload.
+
+Record raw per-request data and aggregate at least:
+
+- request success rate;
+- TTFT;
+- TPOT/ITL or inter-token latency;
+- end-to-end latency p50/p95/p99;
+- input/output tokens per second and aggregate throughput;
+- CPU and GPU utilization;
+- worker affinity and NUMA memory policy during the run.
+
+Use the same warmup and sample counts for both arms. Report absolute values,
+relative change, variance or confidence interval where available, and the
+measurement limitations. Do not claim a performance improvement without a
+predefined acceptance threshold; if no threshold exists, report comparison
+data without a PASS/FAIL performance conclusion.
+
+### 12.11 Stage I: SGLang and remaining framework scope
+
+Inspect whether a clean SGLang 0.5.18 environment is available. If it is
+available and isolated, validate a real TP=1 service with plugin off/on,
+including Hook discovery, native-empty fallback, Worker affinity, memory
+policy, one fixed request, and output consistency. Then separately assess
+multi-GPU TP/DP and launcher/Ray paths. If SGLang is unavailable on 184, mark
+the real-service stages `BLOCKED` and record the missing environment; source
+tests must not be presented as real SGLang validation.
+
+Confirm and report that `ascend-sysfs-pci` is not currently wired into the
+SGLang assembly path unless the source has changed. Do not silently broaden
+the claimed hardware/framework support.
+
+### 12.12 Final self-validation report
+
+Write `report.md` with these sections:
+
+1. Scope, acceptance criteria, and exact commit.
+2. Environment, workload inventory, isolation decision, and safety result.
+3. Stage matrix with command, return code, status, and evidence path.
+4. Source test and coverage result.
+5. Provider/topology mapping tables and PCIe paths.
+6. Controlled vLLM Hook and dummy binding evidence.
+7. Real vLLM service evidence and process-to-device correlation.
+8. Inference result consistency comparison.
+9. Performance A/B data and limitations, or a precise blocked reason.
+10. SGLang results and unsupported boundaries.
+11. Failures classified as code, environment, workload, or harness.
+12. Confirmed capabilities, unverified capabilities, and recommended next step.
+
+The conclusion must use separate statements for:
+
+```text
+source tests prove ...
+Provider/topology probes prove ...
+controlled dummy spawn proves ...
+real vLLM service proves ...
+result-consistency test proves ...
+performance comparison shows ...
+SGLang remains ...
+```
+
+Never turn `BLOCKED` into `PASS`, never infer performance from functional
+success, and never claim production or multi-process support without the
+corresponding evidence.
