@@ -110,7 +110,7 @@ def install(*, mode: PluginMode | None = None) -> None:
         )
     requested_provider = None if config.provider == "auto" else config.provider
     if requested_provider is not None:
-        from kunpeng_affinity.adapters.vllm_candidate import (
+        from kunpeng_affinity.adapters.vllm_devices import (
             VLLM_PROVIDER_NAMES,
         )
 

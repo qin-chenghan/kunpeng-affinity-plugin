@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from kunpeng_affinity.adapters import vllm_candidate
+from kunpeng_affinity.adapters.vllm_devices import create_vllm_provider_registry
 from kunpeng_affinity.adapters.vllm_eligibility import (
     check_vllm_generic_eligibility,
 )
@@ -34,7 +35,7 @@ class AutomaticAffinityResolution:
 
 def provider_registry(platform: Any, requested_provider: str | None = None) -> Any:
     """Create the provider registry used by vLLM resolution."""
-    return vllm_candidate.create_vllm_provider_registry(
+    return create_vllm_provider_registry(
         platform,
         requested_provider=requested_provider,
     )

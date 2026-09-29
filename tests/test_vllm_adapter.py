@@ -8,14 +8,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kunpeng_affinity.adapters.vllm_candidate import (
-    build_vllm_device_contexts,
-    create_vllm_provider_registry,
     resolve_vllm_generic_affinity,
     resolve_vllm_visibility_fingerprint,
 )
 from kunpeng_affinity.adapters.vllm_commit import commit_vllm_nodes
 from kunpeng_affinity.adapters.vllm_eligibility import (
     check_vllm_generic_eligibility,
+)
+from kunpeng_affinity.adapters.vllm_devices import (
+    build_vllm_device_contexts,
+    create_vllm_provider_registry,
 )
 from kunpeng_affinity.adapters.vllm_native import classify_vllm_native_result
 from kunpeng_affinity.adapters.vllm_revalidation import (
@@ -109,7 +111,7 @@ class VllmGenericAdapterTest(unittest.TestCase):
                 clear=False,
             ),
             patch(
-                "kunpeng_affinity.adapters.vllm_candidate.IluvatarRuntimeProvider"
+                "kunpeng_affinity.adapters.vllm_devices.IluvatarRuntimeProvider"
             ) as provider_type,
         ):
             provider_type.name = "iluvatar-runtime-pci"
@@ -181,11 +183,11 @@ class VllmGenericAdapterTest(unittest.TestCase):
 
         with (
             patch(
-                "kunpeng_affinity.adapters.vllm_candidate.IluvatarRuntimeProvider",
+                "kunpeng_affinity.adapters.vllm_devices.IluvatarRuntimeProvider",
                 FakeRuntimeProvider,
             ),
             patch(
-                "kunpeng_affinity.adapters.vllm_candidate.os.sched_getaffinity",
+                "kunpeng_affinity.adapters.vllm_devices.os.sched_getaffinity",
                 return_value={9, 10, 11},
                 create=True,
             ),
@@ -305,7 +307,7 @@ class VllmGenericAdapterTest(unittest.TestCase):
         numa_utils = types.SimpleNamespace(_can_set_mempolicy=lambda: True)
         with (
             patch(
-                "kunpeng_affinity.adapters.vllm_candidate.os.sched_getaffinity",
+                "kunpeng_affinity.adapters.vllm_devices.os.sched_getaffinity",
                 side_effect=AssertionError("generic eligibility must not reject cpuset"),
                 create=True,
             ),

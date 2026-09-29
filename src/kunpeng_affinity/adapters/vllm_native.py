@@ -38,7 +38,7 @@ def classify_vllm_native_result(numa_utils: Any, platform: Any) -> NativeOutcome
             failure_code="NATIVE_RESULT_INVALID",
             evidence=(f"native result type={type(raw_nodes).__name__}",),
         )
-    from kunpeng_affinity.adapters.vllm_candidate import vllm_device_count
+    from kunpeng_affinity.adapters.vllm_devices import vllm_device_count
 
     try:
         count = vllm_device_count(platform)
