@@ -25,17 +25,20 @@ from kunpeng_affinity.adapters.vllm_native import classify_vllm_native_result
 from kunpeng_affinity.adapters.vllm_eligibility import (
     check_vllm_generic_eligibility,
 )
+from kunpeng_affinity.adapters.vllm_resolution import (
+    AutomaticAffinityResolution as _AutomaticAffinityResolution,
+    provider_registry,
+    revalidate_visibility,
+    resolve_automatic_nodes,
+    resolve_generic_nodes,
+)
 from kunpeng_affinity.config import (
     CpuPolicy,
     PluginMode,
     load_plugin_config,
     load_plugin_mode,
 )
-from kunpeng_affinity.core.errors import (
-    AffinityDiscoveryError,
-    AffinityIntegrationError,
-    NativeContractError,
-)
+from kunpeng_affinity.core.errors import AffinityDiscoveryError, AffinityIntegrationError
 from kunpeng_affinity.core.models import NativeOutcome, NativeStatus
 
 logger = logging.getLogger(__name__)
@@ -55,16 +58,6 @@ _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _SUPPORTED_BASE_VERSIONS = frozenset(
     {_TARGET_VERSION, _COMPATIBILITY_VERSION, _AUXILIARY_DEMO_VERSION}
 )
-
-
-@dataclass(frozen=True)
-class _AutomaticAffinityResolution:
-    nodes: tuple[int, ...]
-    source: str
-    visibility_fingerprint: str | None
-    registry: Any | None
-    requested_provider: str | None = None
-    snapshot_json: str | None = None
 
 
 @dataclass(frozen=True)
@@ -137,26 +130,7 @@ def _current_platform() -> Any:
 
 
 def _provider_registry(platform: Any, requested_provider: str | None = None) -> Any:
-    from kunpeng_affinity.adapters.vllm_candidate import (
-        create_vllm_provider_registry,
-    )
-
-    return create_vllm_provider_registry(
-        platform, requested_provider=requested_provider
-    )
-
-
-def _nodes_from_generic_batch(batch: Any) -> list[int]:
-    nodes: list[int] = []
-    for resolution in batch.ordered_results:
-        node = resolution.affinity.numa_node
-        if node is None:
-            raise AffinityDiscoveryError(
-                "generic NUMA resolution produced a result without a node",
-                code="NUMA_UNKNOWN",
-            )
-        nodes.append(node)
-    return nodes
+    return provider_registry(platform, requested_provider)
 
 
 def _resolve_generic_nodes(
@@ -169,40 +143,15 @@ def _resolve_generic_nodes(
     local_rank: int | None,
     dp_local_rank: int | None,
 ) -> _AutomaticAffinityResolution:
-    # Check the host and process prerequisites before reading device topology.
-    from kunpeng_affinity.adapters.vllm_candidate import (
-        resolve_vllm_generic_affinity,
-    )
-
-    check_vllm_generic_eligibility(numa_utils)
-
-    # Resolve every visible device as one batch so a partial result cannot be used.
-    batch = resolve_vllm_generic_affinity(
+    return resolve_generic_nodes(
+        numa_utils,
         platform,
-        registry=registry,
+        registry,
         requested_provider=requested_provider,
         process_kind=process_kind,
         local_rank=local_rank,
         dp_local_rank=dp_local_rank,
-    )
-    if not batch.committable:
-        summary = "; ".join(batch.failure_summary) or "incomplete topology result"
-        raise AffinityDiscoveryError(
-            f"generic vLLM affinity resolution is not committable: {summary}",
-            code=batch.status.value.upper(),
-        )
-    if batch.visibility_fingerprint is None:
-        raise AffinityDiscoveryError(
-            "generic NUMA resolution did not produce a visibility fingerprint",
-            code="VISIBILITY_UNAVAILABLE",
-        )
-    return _AutomaticAffinityResolution(
-        nodes=tuple(_nodes_from_generic_batch(batch)),
-        source="generic",
-        visibility_fingerprint=batch.visibility_fingerprint,
-        registry=registry,
-        requested_provider=requested_provider,
-        snapshot_json=batch.snapshot_json,
+        eligibility_checker=check_vllm_generic_eligibility,
     )
 
 
@@ -216,46 +165,19 @@ def _resolve_automatic_nodes(
     local_rank: int | None = None,
     dp_local_rank: int | None = None,
 ) -> _AutomaticAffinityResolution:
-    """Resolve a complete node list without mutating vLLM configuration."""
-    registry = None
-    if not force_generic:
-        # Classify the native result before deciding whether fallback is legal.
-        outcome = classify_vllm_native_result(numa_utils, platform)
-        if outcome.status is NativeStatus.ERROR:
-            assert outcome.original_error is not None
-            raise outcome.original_error
-        if outcome.status is NativeStatus.INVALID:
-            raise NativeContractError(
-                "vLLM native NUMA result violates its return contract: "
-                + (outcome.failure_code or "NATIVE_RESULT_INVALID"),
-                code=outcome.failure_code or "NATIVE_RESULT_INVALID",
-            )
-        if outcome.status is NativeStatus.VALID:
-            nodes = list(outcome.nodes)
-            return _AutomaticAffinityResolution(
-                nodes=tuple(nodes),
-                source="native",
-                visibility_fingerprint=None,
-                registry=None,
-                requested_provider=requested_provider,
-            )
-        logger.warning(
-            "[kunpeng-affinity] native NUMA result unavailable code=%s; "
-            "trying generic Linux topology",
-            outcome.failure_code,
-        )
-
-    # Native discovery was unavailable or explicitly bypassed; only now build
-    # the provider registry and inspect device identity.
-    registry = _provider_registry(platform, requested_provider)
-    return _resolve_generic_nodes(
+    return resolve_automatic_nodes(
         numa_utils,
         platform,
-        registry,
+        force_generic=force_generic,
         requested_provider=requested_provider,
         process_kind=process_kind,
         local_rank=local_rank,
         dp_local_rank=dp_local_rank,
+        native_classifier=classify_vllm_native_result,
+        registry_factory=_provider_registry,
+        generic_resolution=lambda *args, **kwargs: _resolve_generic_nodes(
+            *args, **kwargs
+        ),
     )
 
 
@@ -267,26 +189,13 @@ def _revalidate_visibility(
     local_rank: int | None,
     dp_local_rank: int | None,
 ) -> None:
-    if resolution.visibility_fingerprint is None:
-        return
-    from kunpeng_affinity.adapters.vllm_candidate import (
-        resolve_vllm_visibility_fingerprint,
-    )
-
-    current = resolve_vllm_visibility_fingerprint(
+    revalidate_visibility(
+        resolution,
         platform,
-        registry=resolution.registry,
-        requested_provider=resolution.requested_provider,
         process_kind=process_kind,
         local_rank=local_rank,
         dp_local_rank=dp_local_rank,
-        include_topology=True,
     )
-    if current != resolution.visibility_fingerprint:
-        raise AffinityDiscoveryError(
-            "vLLM device visibility changed between resolution and commit",
-            code="VISIBILITY_CHANGED",
-        )
 
 
 def _strict_failure(error: AffinityDiscoveryError) -> AffinityIntegrationError:
