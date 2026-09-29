@@ -5,18 +5,13 @@ from __future__ import annotations
 import inspect
 import logging
 import os
-import sys
 from contextlib import contextmanager
-from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Iterator
 
 from kunpeng_affinity.adapters.vllm_commit import (
     commit_vllm_nodes,
     release_invalid_vllm_transaction,
-)
-from kunpeng_affinity.adapters.vllm_contract import (
-    TRANSACTION_MARKER,
 )
 from kunpeng_affinity.adapters.vllm_revalidation import (
     validate_inherited_vllm_transaction,
@@ -32,13 +27,17 @@ from kunpeng_affinity.adapters.vllm_resolution import (
     resolve_automatic_nodes,
     resolve_generic_nodes,
 )
+from kunpeng_affinity.adapters.vllm_lifecycle import (
+    VllmAffinityAdapter,
+    VllmCall as _VllmCall,
+)
 from kunpeng_affinity.config import (
     CpuPolicy,
     PluginMode,
     load_plugin_config,
     load_plugin_mode,
 )
-from kunpeng_affinity.core.errors import AffinityDiscoveryError, AffinityIntegrationError
+from kunpeng_affinity.core.errors import AffinityIntegrationError
 from kunpeng_affinity.core.models import NativeOutcome, NativeStatus
 
 logger = logging.getLogger(__name__)
@@ -58,16 +57,6 @@ _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _SUPPORTED_BASE_VERSIONS = frozenset(
     {_TARGET_VERSION, _COMPATIBILITY_VERSION, _AUXILIARY_DEMO_VERSION}
 )
-
-
-@dataclass(frozen=True)
-class _VllmCall:
-    args: tuple[Any, ...]
-    kwargs: dict[str, Any]
-    parallel_config: Any
-    process_kind: str
-    local_rank: int | None
-    dp_local_rank: int | None
 
 
 def _vllm_version() -> str:
@@ -102,21 +91,6 @@ def _is_supported_vllm_version(detected_version: str) -> bool:
         and parsed.post is None
         and parsed.dev is None
     )
-
-
-def _argument(
-    args: tuple[Any, ...], kwargs: dict[str, Any], index: int, name: str, default: Any
-) -> Any:
-    if name in kwargs:
-        return kwargs[name]
-    if len(args) > index:
-        return args[index]
-    return default
-
-
-def _numa_bind_enabled(vllm_config: Any) -> Any:
-    parallel_config = getattr(vllm_config, "parallel_config", None)
-    return getattr(parallel_config, "numa_bind", "unknown")
 
 
 def _force_generic_enabled() -> bool:
@@ -198,205 +172,6 @@ def _revalidate_visibility(
     )
 
 
-def _strict_failure(error: AffinityDiscoveryError) -> AffinityIntegrationError:
-    return AffinityIntegrationError(
-        f"strict vLLM affinity discovery failed [{error.code}]: {error}",
-        code=error.code,
-    )
-
-
-def _should_resolve(parallel_config: Any, process_kind: str) -> bool:
-    if parallel_config is None or not getattr(parallel_config, "numa_bind", False):
-        return False
-    if getattr(parallel_config, "numa_bind_nodes", None) is not None:
-        return False
-    if process_kind not in {"worker", "EngineCore"}:
-        return False
-    return True
-
-
-@contextmanager
-def _automatic_affinity_context(
-    *,
-    current: Any,
-    numa_utils: Any,
-    mode: PluginMode,
-    force_generic: bool,
-    requested_provider: str | None,
-    call: _VllmCall,
-) -> Iterator[None]:
-    platform = _current_platform()
-    try:
-        # Resolve the complete NUMA result without changing framework state yet.
-        resolution = _resolve_automatic_nodes(
-            numa_utils,
-            platform,
-            force_generic=force_generic,
-            requested_provider=requested_provider,
-            process_kind=call.process_kind,
-            local_rank=call.local_rank,
-            dp_local_rank=call.dp_local_rank,
-        )
-
-        # Ensure the device-to-BDF view did not change during topology analysis.
-        _revalidate_visibility(
-            resolution,
-            platform,
-            process_kind=call.process_kind,
-            local_rank=call.local_rank,
-            dp_local_rank=call.dp_local_rank,
-        )
-        # Valid native results remain owned by vLLM. The plugin must not create
-        # a marker or rewrite fields when the native query was usable.
-        if resolution.source == "native":
-            with current(*call.args, **call.kwargs):
-                yield
-            return
-        # Commit only after the complete result and its visibility are validated.
-        commit = commit_vllm_nodes(
-            call.parallel_config,
-            list(resolution.nodes),
-            visibility_fingerprint=resolution.visibility_fingerprint,
-            snapshot_json=resolution.snapshot_json,
-            requested_provider=resolution.requested_provider,
-        )
-    except AffinityDiscoveryError as exc:
-        # Discovery failures are recoverable in auto mode and fatal in strict mode.
-        if force_generic or mode is PluginMode.STRICT:
-            raise _strict_failure(exc) from exc
-        logger.warning(
-            "[kunpeng-affinity] automatic affinity skipped code=%s: %s; "
-            "launching without additional binding",
-            exc.code,
-            exc,
-        )
-        # A user-supplied CPU policy still needs vLLM's original context even
-        # when the plugin cannot add an automatically discovered NUMA node.
-        if getattr(call.parallel_config, "numa_bind_cpus", None) is not None:
-            with current(*call.args, **call.kwargs):
-                yield
-            return
-        yield
-        return
-
-    logger.warning(
-        "[kunpeng-affinity] selected NUMA nodes=%s source=%s%s",
-        list(resolution.nodes),
-        resolution.source,
-        "; native GPU NUMA query bypassed" if force_generic else "",
-    )
-    try:
-        # The original vLLM context still owns process creation and numactl setup.
-        manager = current(*call.args, **call.kwargs)
-        manager.__enter__()
-    except BaseException:
-        commit.rollback()
-        raise
-    try:
-        commit.mark_committed()
-    except BaseException:
-        error = sys.exc_info()
-        try:
-            manager.__exit__(*error)
-        finally:
-            commit.rollback()
-        raise
-
-    try:
-        yield
-    except BaseException:
-        if not manager.__exit__(*sys.exc_info()):
-            raise
-    else:
-        manager.__exit__(None, None, None)
-
-
-@dataclass(frozen=True)
-class VllmAffinityAdapter:
-    """Run one vLLM subprocess call through the plugin decision pipeline."""
-
-    current: Any
-    numa_utils: Any
-    mode: PluginMode
-    force_generic: bool
-    requested_provider: str | None
-    detected_version: str
-
-    @contextmanager
-    def configure_subprocess(
-        self, *args: Any, **kwargs: Any
-    ) -> Iterator[None]:
-        vllm_config = _argument(args, kwargs, 0, "vllm_config", None)
-        local_rank = _argument(args, kwargs, 1, "local_rank", None)
-        dp_local_rank = _argument(args, kwargs, 2, "dp_local_rank", None)
-        process_kind = _argument(args, kwargs, 3, "process_kind", "worker")
-        parallel_config = getattr(vllm_config, "parallel_config", None)
-        call = _VllmCall(
-            args=args,
-            kwargs=kwargs,
-            parallel_config=parallel_config,
-            process_kind=process_kind,
-            local_rank=local_rank,
-            dp_local_rank=dp_local_rank,
-        )
-        logger.warning(
-            "[kunpeng-affinity] pid=%s vllm=%s process_kind=%s "
-            "local_rank=%s dp_local_rank=%s numa_bind=%s",
-            os.getpid(),
-            self.detected_version,
-            process_kind,
-            local_rank,
-            dp_local_rank,
-            _numa_bind_enabled(vllm_config),
-        )
-
-        # Revalidate a result inherited from an earlier plugin transaction.
-        if getattr(parallel_config, TRANSACTION_MARKER, None) is not None:
-            try:
-                validate_inherited_vllm_transaction(
-                    parallel_config,
-                    numa_utils=self.numa_utils,
-                    platform=_current_platform(),
-                    local_rank=local_rank,
-                    dp_local_rank=dp_local_rank,
-                    process_kind=process_kind,
-                )
-            except AffinityDiscoveryError as exc:
-                if exc.code == "TRANSACTION_IN_PROGRESS":
-                    raise AffinityIntegrationError(
-                        "vLLM affinity transaction is already in progress",
-                        code=exc.code,
-                    ) from exc
-                if self.mode is PluginMode.STRICT:
-                    raise _strict_failure(exc) from exc
-                logger.warning(
-                    "[kunpeng-affinity] inherited transaction released code=%s: %s",
-                    exc.code,
-                    exc,
-                )
-                release_invalid_vllm_transaction(parallel_config)
-            with self.current(*args, **kwargs):
-                yield
-            return
-
-        # Generate and commit a candidate only for an eligible automatic call.
-        if _should_resolve(parallel_config, process_kind):
-            with _automatic_affinity_context(
-                current=self.current,
-                numa_utils=self.numa_utils,
-                mode=self.mode,
-                force_generic=self.force_generic,
-                requested_provider=self.requested_provider,
-                call=call,
-            ):
-                yield
-            return
-
-        # All unaffected calls retain the original vLLM behavior.
-        with self.current(*args, **kwargs):
-            yield
-
-
 def install(*, mode: PluginMode | None = None) -> None:
     """Install the vLLM affinity decision Hook in the current process."""
     # Resolve plugin policy before importing framework or hardware-specific code.
@@ -469,6 +244,13 @@ def install(*, mode: PluginMode | None = None) -> None:
         force_generic=_force_generic_enabled(),
         requested_provider=requested_provider,
         detected_version=detected_version,
+        platform_factory=_current_platform,
+        resolver=_resolve_automatic_nodes,
+        visibility_validator=_revalidate_visibility,
+        commit_nodes=commit_vllm_nodes,
+        inherited_validator=validate_inherited_vllm_transaction,
+        transaction_releaser=release_invalid_vllm_transaction,
+        logger=logger,
     )
 
     @contextmanager

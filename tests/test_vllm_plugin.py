@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from unittest.mock import ANY, Mock, patch
 
 from kunpeng_affinity.adapters import vllm_adapter as vllm_plugin
+from kunpeng_affinity.adapters.vllm_lifecycle import automatic_affinity_context
 from kunpeng_affinity.core.identity import serialized_snapshot_fingerprint
 from kunpeng_affinity.core.errors import (
     AffinityDiscoveryError,
@@ -186,7 +187,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "commit_vllm_nodes", return_value=commit),
             self.assertRaisesRegex(RuntimeError, "marker conflict"),
         ):
-            with vllm_plugin._automatic_affinity_context(
+            with automatic_affinity_context(
                 current=original,
                 numa_utils=self.numa_utils,
                 mode=vllm_plugin.PluginMode.AUTO,
@@ -200,6 +201,11 @@ class VllmPluginTest(unittest.TestCase):
                     local_rank=0,
                     dp_local_rank=None,
                 ),
+                platform_factory=vllm_plugin._current_platform,
+                resolver=vllm_plugin._resolve_automatic_nodes,
+                visibility_validator=vllm_plugin._revalidate_visibility,
+                commit_nodes=vllm_plugin.commit_vllm_nodes,
+                logger=vllm_plugin.logger,
             ):
                 pass
 
