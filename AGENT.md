@@ -871,3 +871,132 @@ SGLang remains ...
 Never turn `BLOCKED` into `PASS`, never infer performance from functional
 success, and never claim production or multi-process support without the
 corresponding evidence.
+
+## 13. Follow-up tasks from 184 TP=1 self-validation review
+
+The previous 184 report established a strong TP=1 result, but its real-service
+logs prove vLLM's observed EngineCore binding more directly than they prove the
+plugin's generic Provider path and Worker-level result. Complete the following
+focused follow-up on the same isolated validation resources. Do not repeat
+Provider or dummy-spawn stages unless the tested commit changes those paths.
+
+### 13.1 Real TP=1 forced-generic service
+
+Run an isolated TP=1 service with the same model, image, visible GPU, and
+`--numa-bind` settings as the existing service comparison, plus:
+
+```text
+KUNPENG_AFFINITY_VLLM_FORCE_GENERIC=1
+KUNPENG_AFFINITY_PROVIDER=iluvatar-runtime-pci
+```
+
+The service is a valid forced-generic result only when the evidence contains
+all of the following:
+
+- the vLLM general-plugin entry point was loaded;
+- the vLLM subprocess Hook was installed in the relevant process;
+- the native NUMA query was bypassed or recorded as zero calls;
+- the generic path selected a NUMA node;
+- the Provider/topology evidence identifies the visible GPU's UUID, BDF and
+  NUMA node;
+- the service starts, becomes ready, answers one fixed request, and exits
+  cleanly;
+- EngineCore and Worker process evidence is collected separately when both
+  exist.
+
+Do not treat only `Binding EngineCore subprocess` from vLLM as proof of this
+stage. Preserve the plugin log lines and the per-process evidence in
+`vllm-service-forced-generic/`.
+
+### 13.2 Real TP=1 automatic-fallback service
+
+Run the same isolated TP=1 service without the force-generic override. Keep
+`--numa-bind` enabled and use the same Provider configuration. The expected
+plugin decision is:
+
+```text
+native query returns no usable NUMA result
+  -> plugin records FALLBACK_ALLOWED
+  -> Iluvatar Provider resolves UUID -> BDF
+  -> Linux topology resolves BDF -> NUMA/CPU set
+  -> vLLM native context applies the selected NUMA node
+```
+
+The stage is `PASS` only if the service log proves the native-empty result and
+the subsequent generic selection. A successful response plus a NUMA binding
+log without these decision records is `BLOCKED` for plugin-chain proof, not a
+pass. Store evidence in `vllm-service-auto-fallback/`.
+
+### 13.3 EngineCore and Worker process correlation
+
+For both real-service runs, produce a table that maps:
+
+```text
+PID -> parent PID -> process_kind -> local_rank/dp_local_rank
+    -> logical GPU -> UUID -> BDF -> NUMA node
+    -> expected CPUs -> observed Cpus_allowed_list
+    -> observed memory policy
+```
+
+Use read-only process inspection and the plugin/vLLM logs. At minimum preserve
+the equivalent of `/proc/<pid>/status` affinity fields, the process command
+line with sensitive arguments redacted, and the NUMA policy observation. Do
+not label an EngineCore result as a Worker result. If the Worker inherits the
+EngineCore policy, show the parent-child relationship and state that it is
+inherited. If a Worker is not observable, mark Worker-level validation
+`BLOCKED` rather than inferring it.
+
+### 13.4 Inference result consistency rerun
+
+The prior report used a similarity score below 1.0 for the first sample and
+therefore cannot claim that all 20 outputs were byte-for-byte identical. Rerun
+the comparison with:
+
+- identical plugin-off and plugin-on request order;
+- an explicit warmup set excluded from comparison;
+- a fixed deterministic generation configuration;
+- exact output comparison for every measured sample;
+- saved redacted JSONL outputs and a machine-readable comparison result.
+
+Report warmup samples separately. If any measured sample differs, preserve the
+diff and report `FAIL` or `BLOCKED` according to whether the difference can be
+attributed and reproduced. Use `result regression`, not `model accuracy`,
+unless a defined evaluation dataset and metric are also used.
+
+### 13.5 Performance A/B repeatability
+
+The existing 20-request result is preliminary because one off-arm warmup
+sample distorted TTFT p95 and there was no repeated-run variance. If an idle
+allocation remains available, repeat plugin-off and plugin-on under identical
+conditions with:
+
+- the same model, image, visible GPU, TP/DP and CPU constraints;
+- the same request set, concurrency and token limits;
+- an explicit warmup phase excluded from measured samples;
+- at least three independent rounds per arm;
+- raw per-request records and per-round aggregates.
+
+Report TTFT, TPOT/ITL, end-to-end latency and throughput using p50/p95 and
+round-to-round variation. Explain any outlier rather than silently removing
+it. Without a predefined performance threshold, label the result `comparison
+data`, not `PASS` or `FAIL`, and do not claim a performance improvement.
+If no safe idle allocation remains, mark this follow-up `BLOCKED` and retain
+the existing measurements as preliminary evidence.
+
+### 13.6 Required report correction
+
+Update the self-validation report so its conclusion uses these boundaries:
+
+```text
+source tests prove the source-level contracts;
+Provider/topology probes prove UUID/BDF/NUMA mapping;
+controlled dummy spawn proves controlled binding;
+real TP=1 service proves only the paths directly evidenced in its logs;
+result consistency proves only the compared samples after warmup;
+performance is comparison data unless a threshold and repeatability support a conclusion;
+SGLang remains unvalidated on this platform.
+```
+
+Until Sections 13.1-13.3 are complete, do not state that a real vLLM service
+has proven the plugin's complete generic execution chain. Until Section 13.4
+is complete, do not state that all outputs are byte-for-byte identical.
