@@ -7,10 +7,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from kunpeng_affinity.adapters.vllm_adapter import (
-    check_vllm_generic_eligibility,
-    classify_vllm_native_result,
-)
 from kunpeng_affinity.adapters.vllm_candidate import (
     build_vllm_device_contexts,
     create_vllm_provider_registry,
@@ -18,6 +14,10 @@ from kunpeng_affinity.adapters.vllm_candidate import (
     resolve_vllm_visibility_fingerprint,
 )
 from kunpeng_affinity.adapters.vllm_commit import commit_vllm_nodes
+from kunpeng_affinity.adapters.vllm_eligibility import (
+    check_vllm_generic_eligibility,
+)
+from kunpeng_affinity.adapters.vllm_native import classify_vllm_native_result
 from kunpeng_affinity.adapters.vllm_revalidation import (
     validate_inherited_vllm_transaction,
 )

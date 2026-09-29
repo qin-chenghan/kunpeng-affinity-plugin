@@ -9,8 +9,17 @@ from contextlib import contextmanager
 from unittest.mock import ANY, Mock, patch
 
 from kunpeng_affinity.adapters import vllm_adapter as vllm_plugin
-from kunpeng_affinity.adapters.vllm_lifecycle import automatic_affinity_context
+from kunpeng_affinity.adapters.vllm_lifecycle import (
+    VllmCall,
+    automatic_affinity_context,
+)
+from kunpeng_affinity.adapters.vllm_resolution import (
+    AutomaticAffinityResolution,
+    resolve_automatic_nodes,
+    resolve_generic_nodes,
+)
 from kunpeng_affinity.core.identity import serialized_snapshot_fingerprint
+from kunpeng_affinity.core.models import NativeOutcome, NativeStatus
 from kunpeng_affinity.core.errors import (
     AffinityDiscoveryError,
     AffinityIntegrationError,
@@ -86,7 +95,7 @@ class VllmPluginTest(unittest.TestCase):
                 sort_keys=True,
             )
             fingerprint = serialized_snapshot_fingerprint(snapshot_json)
-        return vllm_plugin._AutomaticAffinityResolution(
+        return AutomaticAffinityResolution(
             nodes=tuple(nodes),
             source=source,
             visibility_fingerprint=fingerprint,
@@ -128,26 +137,24 @@ class VllmPluginTest(unittest.TestCase):
         )
         registry = object()
 
-        with (
-            patch.object(vllm_plugin, "check_vllm_generic_eligibility"),
-            patch(
-                "kunpeng_affinity.adapters.vllm_candidate.resolve_vllm_generic_affinity",
-                return_value=batch,
-            ) as resolver,
-        ):
-            result = vllm_plugin._resolve_generic_nodes(
-                self.numa_utils,
-                object(),
-                registry,
-                requested_provider="test-provider",
-                process_kind="worker",
-                local_rank=0,
-                dp_local_rank=None,
-            )
+        eligibility = Mock()
+        resolver = Mock(return_value=batch)
+        result = resolve_generic_nodes(
+            self.numa_utils,
+            object(),
+            registry,
+            requested_provider="test-provider",
+            process_kind="worker",
+            local_rank=0,
+            dp_local_rank=None,
+            eligibility_checker=eligibility,
+            generic_resolver=resolver,
+        )
 
         self.assertEqual(result.nodes, (3,))
         self.assertEqual(result.visibility_fingerprint, "fingerprint")
         self.assertEqual(result.snapshot_json, snapshot_json)
+        eligibility.assert_called_once_with(self.numa_utils)
         resolver.assert_called_once_with(
             ANY,
             registry=registry,
@@ -180,10 +187,10 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 return_value=self.resolution([3], "generic", "candidate"),
             ),
-            patch.object(vllm_plugin, "_revalidate_visibility"),
+            patch.object(vllm_plugin, "revalidate_visibility"),
             patch.object(vllm_plugin, "commit_vllm_nodes", return_value=commit),
             self.assertRaisesRegex(RuntimeError, "marker conflict"),
         ):
@@ -193,7 +200,7 @@ class VllmPluginTest(unittest.TestCase):
                 mode=vllm_plugin.PluginMode.AUTO,
                 force_generic=False,
                 requested_provider=None,
-                call=vllm_plugin._VllmCall(
+                call=VllmCall(
                     args=(),
                     kwargs={},
                     parallel_config=parallel_config,
@@ -202,8 +209,8 @@ class VllmPluginTest(unittest.TestCase):
                     dp_local_rank=None,
                 ),
                 platform_factory=vllm_plugin._current_platform,
-                resolver=vllm_plugin._resolve_automatic_nodes,
-                visibility_validator=vllm_plugin._revalidate_visibility,
+                resolver=vllm_plugin.resolve_automatic_nodes,
+                visibility_validator=vllm_plugin.revalidate_visibility,
                 commit_nodes=vllm_plugin.commit_vllm_nodes,
                 logger=vllm_plugin.logger,
             ):
@@ -290,7 +297,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 return_value=self.resolution([3], "generic"),
             ) as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
@@ -317,7 +324,7 @@ class VllmPluginTest(unittest.TestCase):
                 os.environ,
                 {"KUNPENG_AFFINITY_VLLM_FORCE_GENERIC": "true"},
             ),
-            patch.object(vllm_plugin, "_resolve_automatic_nodes") as resolver,
+            patch.object(vllm_plugin, "resolve_automatic_nodes") as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
         ):
             vllm_plugin.install()
@@ -339,7 +346,7 @@ class VllmPluginTest(unittest.TestCase):
                 os.environ,
                 {"KUNPENG_AFFINITY_VLLM_FORCE_GENERIC": "yes"},
             ),
-            patch.object(vllm_plugin, "_resolve_automatic_nodes") as resolver,
+            patch.object(vllm_plugin, "resolve_automatic_nodes") as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.26.0"),
         ):
             vllm_plugin.install()
@@ -364,7 +371,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 side_effect=AffinityDiscoveryError(
                     "generic failed",
                     code="DEVICE_MAPPING_MISSING",
@@ -395,7 +402,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 return_value=self.resolution([1], "native"),
             ) as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
@@ -421,12 +428,12 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 return_value=self.resolution(
                     [1], "generic", fingerprint="test-fingerprint"
                 ),
             ) as resolver,
-            patch.object(vllm_plugin, "_revalidate_visibility"),
+            patch.object(vllm_plugin, "revalidate_visibility"),
             patch(
                 "kunpeng_affinity.adapters.vllm_revalidation.resolve_vllm_visibility_fingerprint",
                 side_effect=lambda *args, **kwargs: config.parallel_config._kunpeng_affinity_transaction[
@@ -488,7 +495,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 return_value=self.resolution([1], "native"),
             ) as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
@@ -518,7 +525,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 return_value=self.resolution([1], "native"),
             ) as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
@@ -533,26 +540,22 @@ class VllmPluginTest(unittest.TestCase):
         )
 
     def test_native_capability_gap_falls_back_to_generic(self) -> None:
-        with (
-            patch(
-                "kunpeng_affinity.adapters.vllm_adapter.classify_vllm_native_result",
-                return_value=vllm_plugin.NativeOutcome(
-                    status=vllm_plugin.NativeStatus.FALLBACK_ALLOWED,
-                    failure_code="NATIVE_QUERY_UNAVAILABLE",
-                ),
-            ),
-            patch.object(
-                vllm_plugin,
-                "_resolve_generic_nodes",
-                return_value=self.resolution([3], "generic"),
-            ) as generic,
-        ):
-            resolution = vllm_plugin._resolve_automatic_nodes(
-                self.numa_utils,
-                object(),
-                force_generic=False,
-                dp_local_rank=3,
+        classifier = Mock(
+            return_value=NativeOutcome(
+                status=NativeStatus.FALLBACK_ALLOWED,
+                failure_code="NATIVE_QUERY_UNAVAILABLE",
             )
+        )
+        generic = Mock(return_value=self.resolution([3], "generic"))
+        resolution = resolve_automatic_nodes(
+            self.numa_utils,
+            object(),
+            force_generic=False,
+            dp_local_rank=3,
+            native_classifier=classifier,
+            registry_factory=Mock(return_value=object()),
+            generic_resolution=generic,
+        )
 
         self.assertEqual(resolution.nodes, (3,))
         self.assertEqual(resolution.source, "generic")
@@ -561,23 +564,22 @@ class VllmPluginTest(unittest.TestCase):
 
     def test_native_exception_is_not_converted_to_generic_fallback(self) -> None:
         native_error = RuntimeError("native query failed")
-        with (
-            patch(
-                "kunpeng_affinity.adapters.vllm_adapter.classify_vllm_native_result",
-                return_value=vllm_plugin.NativeOutcome(
-                    status=vllm_plugin.NativeStatus.ERROR,
-                    original_error=native_error,
-                    failure_code="NATIVE_QUERY_FAILED",
-                ),
-            ),
-            patch.object(vllm_plugin, "_resolve_generic_nodes") as generic,
-        ):
-            with self.assertRaises(RuntimeError) as captured:
-                vllm_plugin._resolve_automatic_nodes(
-                    self.numa_utils,
-                    object(),
-                    force_generic=False,
-                )
+        classifier = Mock(
+            return_value=NativeOutcome(
+                status=NativeStatus.ERROR,
+                original_error=native_error,
+                failure_code="NATIVE_QUERY_FAILED",
+            )
+        )
+        generic = Mock()
+        with self.assertRaises(RuntimeError) as captured:
+            resolve_automatic_nodes(
+                self.numa_utils,
+                object(),
+                force_generic=False,
+                native_classifier=classifier,
+                generic_resolution=generic,
+            )
 
         self.assertIs(captured.exception, native_error)
         generic.assert_not_called()
@@ -586,23 +588,15 @@ class VllmPluginTest(unittest.TestCase):
         class SupportedPlatform:
             get_all_gpu_pci_bus_ids = staticmethod(lambda: {0: "0000:01:00.0"})
 
-        with (
-            patch(
-                "kunpeng_affinity.adapters.vllm_adapter._provider_registry",
-                return_value=object(),
-            ),
-            patch.object(
-                vllm_plugin,
-                "_resolve_generic_nodes",
-                return_value=self.resolution([4], "generic"),
-            ) as generic,
-        ):
-            self.numa_utils.get_auto_numa_nodes = lambda: None
-            resolution = vllm_plugin._resolve_automatic_nodes(
-                self.numa_utils,
-                SupportedPlatform,
-                force_generic=False,
-            )
+        generic = Mock(return_value=self.resolution([4], "generic"))
+        self.numa_utils.get_auto_numa_nodes = lambda: None
+        resolution = resolve_automatic_nodes(
+            self.numa_utils,
+            SupportedPlatform,
+            force_generic=False,
+            registry_factory=Mock(return_value=object()),
+            generic_resolution=generic,
+        )
 
         self.assertEqual(resolution.source, "generic")
         self.assertEqual(resolution.nodes, (4,))
@@ -620,7 +614,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 side_effect=AffinityDiscoveryError(
                     "no trusted BDF",
                     code="DEVICE_MAPPING_MISSING",
@@ -649,7 +643,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 side_effect=AffinityDiscoveryError(
                     "no trusted BDF", code="DEVICE_MAPPING_MISSING"
                 ),
@@ -670,7 +664,7 @@ class VllmPluginTest(unittest.TestCase):
                 numa_bind_nodes=None,
             )
         )
-        resolution = vllm_plugin._AutomaticAffinityResolution(
+        resolution = AutomaticAffinityResolution(
             nodes=(1,),
             source="generic",
             visibility_fingerprint="before",
@@ -680,12 +674,12 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 return_value=resolution,
             ),
             patch.object(
                 vllm_plugin,
-                "_revalidate_visibility",
+                "revalidate_visibility",
                 side_effect=AffinityDiscoveryError(
                     "visibility changed",
                     code="VISIBILITY_CHANGED",
@@ -712,7 +706,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 side_effect=AffinityDiscoveryError(
                     "topology unknown",
                     code="NUMA_UNKNOWN",
@@ -738,7 +732,7 @@ class VllmPluginTest(unittest.TestCase):
         original = self.numa_utils.configure_subprocess
         with (
             patch.dict(os.environ, {"KUNPENG_AFFINITY_MODE": "off"}),
-            patch.object(vllm_plugin, "_resolve_automatic_nodes") as resolver,
+            patch.object(vllm_plugin, "resolve_automatic_nodes") as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
             vllm_plugin.install()
@@ -765,7 +759,7 @@ class VllmPluginTest(unittest.TestCase):
                     "KUNPENG_AFFINITY_VLLM_FORCE_GENERIC": "1",
                 },
             ),
-            patch.object(vllm_plugin, "_resolve_automatic_nodes") as resolver,
+            patch.object(vllm_plugin, "resolve_automatic_nodes") as resolver,
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):
             vllm_plugin.install()
@@ -789,7 +783,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 return_value=self.resolution([1], "generic"),
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
@@ -825,7 +819,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(vllm_plugin, "_current_platform", return_value=object()),
             patch.object(
                 vllm_plugin,
-                "_resolve_automatic_nodes",
+                "resolve_automatic_nodes",
                 return_value=self.resolution([1], "generic"),
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),

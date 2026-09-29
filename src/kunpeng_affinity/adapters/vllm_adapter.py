@@ -16,21 +16,11 @@ from kunpeng_affinity.adapters.vllm_commit import (
 from kunpeng_affinity.adapters.vllm_revalidation import (
     validate_inherited_vllm_transaction,
 )
-from kunpeng_affinity.adapters.vllm_native import classify_vllm_native_result
-from kunpeng_affinity.adapters.vllm_eligibility import (
-    check_vllm_generic_eligibility,
-)
 from kunpeng_affinity.adapters.vllm_resolution import (
-    AutomaticAffinityResolution as _AutomaticAffinityResolution,
-    provider_registry,
     revalidate_visibility,
     resolve_automatic_nodes,
-    resolve_generic_nodes,
 )
-from kunpeng_affinity.adapters.vllm_lifecycle import (
-    VllmAffinityAdapter,
-    VllmCall as _VllmCall,
-)
+from kunpeng_affinity.adapters.vllm_lifecycle import VllmAffinityAdapter
 from kunpeng_affinity.config import (
     CpuPolicy,
     PluginMode,
@@ -38,7 +28,6 @@ from kunpeng_affinity.config import (
     load_plugin_mode,
 )
 from kunpeng_affinity.core.errors import AffinityIntegrationError
-from kunpeng_affinity.core.models import NativeOutcome, NativeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -101,75 +90,6 @@ def _current_platform() -> Any:
     from vllm.platforms import current_platform
 
     return current_platform
-
-
-def _provider_registry(platform: Any, requested_provider: str | None = None) -> Any:
-    return provider_registry(platform, requested_provider)
-
-
-def _resolve_generic_nodes(
-    numa_utils: Any,
-    platform: Any,
-    registry: Any,
-    *,
-    requested_provider: str | None,
-    process_kind: str,
-    local_rank: int | None,
-    dp_local_rank: int | None,
-) -> _AutomaticAffinityResolution:
-    return resolve_generic_nodes(
-        numa_utils,
-        platform,
-        registry,
-        requested_provider=requested_provider,
-        process_kind=process_kind,
-        local_rank=local_rank,
-        dp_local_rank=dp_local_rank,
-        eligibility_checker=check_vllm_generic_eligibility,
-    )
-
-
-def _resolve_automatic_nodes(
-    numa_utils: Any,
-    platform: Any,
-    *,
-    force_generic: bool,
-    requested_provider: str | None = None,
-    process_kind: str = "worker",
-    local_rank: int | None = None,
-    dp_local_rank: int | None = None,
-) -> _AutomaticAffinityResolution:
-    return resolve_automatic_nodes(
-        numa_utils,
-        platform,
-        force_generic=force_generic,
-        requested_provider=requested_provider,
-        process_kind=process_kind,
-        local_rank=local_rank,
-        dp_local_rank=dp_local_rank,
-        native_classifier=classify_vllm_native_result,
-        registry_factory=_provider_registry,
-        generic_resolution=lambda *args, **kwargs: _resolve_generic_nodes(
-            *args, **kwargs
-        ),
-    )
-
-
-def _revalidate_visibility(
-    resolution: _AutomaticAffinityResolution,
-    platform: Any,
-    *,
-    process_kind: str,
-    local_rank: int | None,
-    dp_local_rank: int | None,
-) -> None:
-    revalidate_visibility(
-        resolution,
-        platform,
-        process_kind=process_kind,
-        local_rank=local_rank,
-        dp_local_rank=dp_local_rank,
-    )
 
 
 def install(*, mode: PluginMode | None = None) -> None:
@@ -245,8 +165,8 @@ def install(*, mode: PluginMode | None = None) -> None:
         requested_provider=requested_provider,
         detected_version=detected_version,
         platform_factory=_current_platform,
-        resolver=_resolve_automatic_nodes,
-        visibility_validator=_revalidate_visibility,
+        resolver=resolve_automatic_nodes,
+        visibility_validator=revalidate_visibility,
         commit_nodes=commit_vllm_nodes,
         inherited_validator=validate_inherited_vllm_transaction,
         transaction_releaser=release_invalid_vllm_transaction,
