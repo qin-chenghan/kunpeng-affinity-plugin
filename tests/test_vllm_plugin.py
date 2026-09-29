@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from unittest.mock import ANY, Mock, patch
 
 from kunpeng_affinity.adapters import vllm_adapter as vllm_plugin
-from kunpeng_affinity.adapters.vllm_lifecycle import (
+from kunpeng_affinity.adapters.vllm_execution import (
     VllmCall,
     automatic_affinity_context,
 )
@@ -102,6 +102,22 @@ class VllmPluginTest(unittest.TestCase):
             registry=None,
             snapshot_json=snapshot_json,
         )
+
+    def test_vllm_call_parses_mixed_invocation_arguments(self) -> None:
+        config = types.SimpleNamespace(
+            parallel_config=types.SimpleNamespace(numa_bind=True)
+        )
+
+        call = VllmCall.from_invocation(
+            (config, 2),
+            {"dp_local_rank": 3, "process_kind": "EngineCore"},
+        )
+
+        self.assertIs(call.parallel_config, config.parallel_config)
+        self.assertEqual(call.local_rank, 2)
+        self.assertEqual(call.dp_local_rank, 3)
+        self.assertEqual(call.process_kind, "EngineCore")
+        self.assertTrue(call.numa_bind)
 
     def test_register_wraps_and_delegates(self) -> None:
         config = types.SimpleNamespace(
