@@ -10,6 +10,7 @@ from kunpeng_affinity.adapters.vllm_commit import (
     commit_vllm_nodes,
     release_invalid_vllm_transaction,
 )
+from kunpeng_affinity.adapters.vllm_marker import read_committed_vllm_marker
 from kunpeng_affinity.adapters.vllm_revalidation import (
     validate_inherited_vllm_transaction,
 )
@@ -37,6 +38,28 @@ def _snapshot(nodes: list[int]) -> str:
 
 
 class VllmRevalidationTest(unittest.TestCase):
+    def test_committed_marker_decodes_validated_fields(self) -> None:
+        config = types.SimpleNamespace(numa_bind_nodes=None)
+        snapshot = _snapshot([1, 2])
+        commit = commit_vllm_nodes(
+            config,
+            [1, 2],
+            visibility_fingerprint=serialized_snapshot_fingerprint(snapshot),
+            snapshot_json=snapshot,
+            requested_provider="test-provider",
+        )
+        commit.mark_committed()
+
+        marker = read_committed_vllm_marker(config)
+
+        self.assertIsNotNone(marker)
+        assert marker is not None
+        self.assertEqual(marker.owner_pid, os.getpid())
+        self.assertEqual(marker.nodes, (1, 2))
+        self.assertEqual(marker.requested_provider, "test-provider")
+        self.assertEqual(len(marker.mappings), 2)
+        self.assertEqual(len(marker.resolutions), 2)
+
     def test_marker_written_snapshot_is_not_mutated_by_config_changes(self) -> None:
         config = types.SimpleNamespace(numa_bind_nodes=None)
         snapshot = _snapshot([1, 2])
