@@ -293,7 +293,7 @@ class VllmGenericAdapterTest(unittest.TestCase):
     def test_generic_eligibility_uses_vendor_neutral_gates(self) -> None:
         numa_utils = types.SimpleNamespace(_can_set_mempolicy=lambda: True)
         with patch(
-            "kunpeng_affinity.adapters.vllm_adapter.shutil.which",
+            "kunpeng_affinity.adapters.vllm_eligibility.shutil.which",
             return_value="/usr/bin/numactl",
         ):
             check_vllm_generic_eligibility(
@@ -310,7 +310,7 @@ class VllmGenericAdapterTest(unittest.TestCase):
                 create=True,
             ),
             patch(
-                "kunpeng_affinity.adapters.vllm_adapter.shutil.which",
+                "kunpeng_affinity.adapters.vllm_eligibility.shutil.which",
                 return_value="/usr/bin/numactl",
             ),
         ):
