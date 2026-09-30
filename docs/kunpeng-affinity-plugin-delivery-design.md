@@ -1194,18 +1194,18 @@ Python 源码包（发布时可选 wheel）
 | CPU 集合求交 | 已实现并测试 | node 结果已接入 vLLM 0.26 dummy Worker 诊断；exact 策略及多进程时机仍待验证。 |
 | 只读 CLI 与主机探测脚本 | 已实现 Demo | `probe-host.sh` 能打印真实 PCI/NUMA/CPU 证据；需固定 JSON schema 和脱敏策略。 |
 | 单级/多级 Switch | fixture 已验证 | 真实硬件待验证。 |
-| Provider SPI | 已实现 Demo | 已有 `DeviceContext`、`DeviceMapping`、`DeviceMapper`、Registry、静态映射 Provider、`LinuxContextProvider`、vLLM 平台 Provider 和 Iluvatar Runtime Provider；Registry 已进入 vLLM generic 组装路径并支持直接 BDF 优先、Iluvatar UUID→BDF 回退。 |
+| Provider SPI | 已实现 Demo | 已有 `DeviceContext`、`DeviceMapping`、`DeviceMapper`、Registry、静态映射 Provider、`LinuxContextProvider`、vLLM 平台 Provider、Iluvatar Runtime Provider 和 Ascend sysfs Provider；Registry 已进入 vLLM generic 组装路径并支持直接 BDF 优先、目标 Provider 回退。 |
 | Linux context BDF Provider | 已实现并测试 | 只接受上下文明确提供的 BDF 或真实 sysfs 设备路径，不代表任意 GPU 运行时映射已经完成。 |
 | vLLM 平台 BDF Provider | 已实现并测试 | 使用 `get_all_gpu_pci_bus_ids()` 与 `device_id_to_physical_device_id()`；假平台覆盖可见设备重排，vLLM 0.26 单 GPU 真实平台已完成 BDF 到 sysfs 接入验证，目标 0.23 和非原生目标平台仍待验证。 |
-| 目标 GPU Provider | 已实现原型 | Iluvatar Provider 使用 vLLM `get_device_uuid()` 与只读 `ixsmi` UUID/BDF 清单按 UUID 关联；真实 vLLM 0.23+ 容器、版本差异和多卡生命周期仍待验收。 |
+| 目标 GPU Provider | 已实现原型 | Iluvatar Provider 使用 vLLM `get_device_uuid()` 与只读 `ixsmi` UUID/BDF 清单按 UUID 关联；Ascend Provider 使用可见设备列表和只读 sysfs BDF-to-device 表；真实 vLLM 0.23+ 运行时、多卡生命周期仍待验收。 |
 | 批量事务 | 已实现 Demo | 已实现按输入顺序解析、BDF 再校验、fingerprint 一致性和 all-or-nothing 可提交判定；默认 vLLM Provider 会按有序 logical/physical/BDF 映射生成稳定 fingerprint。 |
 | vLLM 配置提交事务 | 已实现 node 策略 Demo | 已实现锁内同值复用、异值冲突、提交前 visibility 二次复核，以及原执行器进入失败时只回滚插件写入的 nodes；exact CPU 双字段事务和跨 spawn fingerprint 携带仍待实现。 |
 | native -> generic 回退 | 已实现并验证 Demo | 已实现并单测 `explicit -> native -> generic -> skip/fail`，另保留强制 generic 诊断开关；vLLM 0.26 单 GPU auto-fallback dummy spawn 已验证。 |
 | `numactl` 和实际 affinity | 部分验证 | vLLM 0.26 dummy Worker 已通过原 `numactl` wrapper 验证 CPU 和 memory policy；EngineCore、真实 Worker 生命周期及目标 0.23 仍待验证。 |
 | vLLM `v0.23.0` 完整集成 | 待验证 | 源码契约已确认，运行闭环未完成。 |
-| SGLang 适配 | 已实现 Demo | 已加入 SGLang 0.5.18 的 general-plugin entry point、NUMA 查询 Hook、Torch runtime facade 和 direct-BDF/UUID-BDF 适配；真实服务、多 GPU、Data Parallel 和 Ray 仍待验证。 |
+| SGLang 适配 | 已实现 Demo | 已加入 SGLang 0.5.18 的 general-plugin entry point、NUMA 查询 Hook、Torch runtime facade、direct-BDF、Ascend sysfs 和 Iluvatar UUID-BDF 适配；真实服务、多 GPU、Data Parallel 和 Ray 仍待验证。 |
 
-当前源码单元测试共 104 项，覆盖通用拓扑、Provider/批量解析、Registry 无匹配/歧义/显式选择、上下文 BDF、vLLM 平台 BDF 映射、Iluvatar UUID→BDF 映射、SGLang Torch runtime facade、SGLang 显式/native/generic 决策、稳定 fingerprint 与可见顺序变化、PCI class 候选发现、node 配置事务与回滚、模拟 vLLM Hook、native 校验、generic 回退、三种插件模式、visibility 提交前变化、兼容门控、显式字段保护和框架执行异常传播。提交 `0e8367e` 已在 vLLM 0.26 单 GPU 隔离环境重新验证：真实插件 entry point 被加载；强制 generic 路径确认 native 查询未调用；auto-fallback 路径确认受控 native 查询调用一次并返回无结果后进入 Registry generic；两条路径均经平台 API 映射到 BDF、生成并复核 fingerprint、通过 Linux sysfs 得出节点，并由原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。该结果不替代目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。新增 SGLang 测试也只证明源码级契约，不证明真实 SGLang 服务闭环。
+当前源码单元测试共 163 项，覆盖通用拓扑、Provider/批量解析、Registry 无匹配/歧义/显式选择、上下文 BDF、vLLM 平台 BDF 映射、Iluvatar UUID→BDF 映射、Ascend sysfs BDF 映射、SGLang Torch runtime facade、SGLang 显式/native/generic 决策、SGLang Ascend 自动选择与 NUMA fixture、稳定 fingerprint 与可见顺序变化、PCI class 候选发现、node 配置事务与回滚、模拟 vLLM Hook、native 校验、generic 回退、三种插件模式、visibility 提交前变化、兼容门控、显式字段保护和框架执行异常传播。提交 `0e8367e` 已在 vLLM 0.26 单 GPU 隔离环境重新验证：真实插件 entry point 被加载；强制 generic 路径确认 native 查询未调用；auto-fallback 路径确认受控 native 查询调用一次并返回无结果后进入 Registry generic；两条路径均经平台 API 映射到 BDF、生成并复核 fingerprint、通过 Linux sysfs 得出节点，并由原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。该结果不替代目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。SGLang 新增测试仍只证明源码级契约和 fixture 闭环，不证明真实 SGLang 服务闭环。
 
 ### 21.2 vLLM 自动绑核运行闭环
 

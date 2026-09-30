@@ -24,15 +24,17 @@ server_args.numa_node is set
   -> return SGLang's explicit result
 otherwise
   -> call SGLang's native GPU NUMA query
-  -> if no node is returned, resolve runtime identity and Linux topology
+  -> if no node is returned, resolve direct BDF, Ascend sysfs, or runtime UUID
+     identity and then Linux topology
   -> auto: return None on discovery failure
   -> strict: raise the discovery failure
 ```
 
 The generic adapter first accepts a direct runtime BDF when Torch exposes one.
-If it does not, it obtains a runtime UUID and uses the Iluvatar provider's
-UUID-to-`ixsmi`-BDF mapping. The shared topology layer then follows the Linux
-PCI parent chain and computes:
+If it does not and `ASCEND_RT_VISIBLE_DEVICES` is set, it uses the Ascend
+sysfs BDF-to-device mapping. On other platforms it obtains a runtime UUID and
+uses the Iluvatar provider's UUID-to-`ixsmi`-BDF mapping. The shared topology
+layer then follows the Linux PCI parent chain and computes:
 
 ```text
 NUMA node CPUs ∩ online CPUs ∩ current process allowed CPUs
@@ -45,7 +47,8 @@ No logical device is associated with a host GPU by enumeration order.
 | File | Responsibility |
 |---|---|
 | `src/kunpeng_affinity/sglang_plugin.py` | SGLang entry point and around-hook decision order |
-| `src/kunpeng_affinity/adapters/sglang_generic.py` | Torch runtime facade, direct-BDF path and UUID/BDF fallback |
+| `src/kunpeng_affinity/adapters/sglang_generic.py` | Torch runtime facade, Provider selection and BDF mapping |
+| `src/kunpeng_affinity/providers/ascend_sysfs.py` | Ascend visibility and sysfs BDF-to-device provider |
 | `src/kunpeng_affinity/providers/iluvatar_runtime.py` | Iluvatar UUID/BDF runtime provider |
 | `src/kunpeng_affinity/policy/batch.py` | Ordered all-or-nothing mapping and topology resolution |
 | `src/kunpeng_affinity/topology/analyzer.py` | Linux PCIe, NUMA and CPU-set analysis |

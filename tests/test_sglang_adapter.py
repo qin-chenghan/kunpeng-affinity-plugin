@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from kunpeng_affinity.adapters.sglang_generic import (
@@ -17,7 +19,12 @@ from kunpeng_affinity.core.errors import (
     PluginConfigError,
 )
 from kunpeng_affinity.core.models import DeviceContext, NativeStatus
-from kunpeng_affinity.sglang_plugin import _around_numa_query, _classify_native_node, register
+from kunpeng_affinity.sglang_plugin import (
+    _around_numa_query,
+    _classify_native_node,
+    _generic_node,
+    register,
+)
 
 UUID_0 = "8631681a-860d-5d5c-8937-fc4efe2beea4"
 
@@ -46,9 +53,32 @@ def completed(output: str) -> subprocess.CompletedProcess[str]:
 
 
 class SglangRuntimeProviderTest(unittest.TestCase):
+    def _ascend_sysfs(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
+        tempdir: tempfile.TemporaryDirectory[str] = tempfile.TemporaryDirectory()
+        root = Path(tempdir.name)
+        endpoint = root / "devices/pci0000:00/0000:00:01.0/0000:45:00.0"
+        endpoint.mkdir(parents=True)
+        (endpoint / "class").write_text("0x120000\n", encoding="ascii")
+        (endpoint / "numa_node").write_text("1\n", encoding="ascii")
+        bridge = endpoint.parent
+        (bridge / "class").write_text("0x060400\n", encoding="ascii")
+        (bridge / "numa_node").write_text("1\n", encoding="ascii")
+        device_links = root / "bus/pci/devices"
+        device_links.mkdir(parents=True)
+        link = device_links / "0000:45:00.0"
+        link.symlink_to(endpoint)
+        (link / "devdrv_sysfs_bdf_to_devid").write_text("45:00.0 ---> 0\n", encoding="ascii")
+        node = root / "devices/system/node/node1"
+        node.mkdir(parents=True)
+        (node / "cpulist").write_text("8-11\n", encoding="ascii")
+        cpu = root / "devices/system/cpu"
+        cpu.mkdir(parents=True)
+        (cpu / "online").write_text("0-11\n", encoding="ascii")
+        return tempdir, root
+
     def test_direct_runtime_bdf_is_used_when_available(self) -> None:
         platform = SglangTorchPlatform(FakeTorch(FakeProperties(pci_bus_id="00000000:45:00.0")))
-        provider = SglangRuntimeProvider(platform)
+        provider = SglangRuntimeProvider(platform, environ={})
 
         mappings = provider.map_all((DeviceContext(framework="sglang", logical_device_id=0),))
 
@@ -61,12 +91,81 @@ class SglangRuntimeProviderTest(unittest.TestCase):
             f"1, 00000000:48:00.0, GPU-62e9c670-d402-58b9-972f-f855b246d309, Iluvatar\n"
         )
         platform = SglangTorchPlatform(FakeTorch(FakeProperties()))
-        provider = SglangRuntimeProvider(platform, command_runner=lambda *a, **k: completed(output))
+        provider = SglangRuntimeProvider(
+            platform,
+            command_runner=lambda *a, **k: completed(output),
+            environ={},
+        )
 
         mappings = provider.map_all((DeviceContext(framework="sglang", logical_device_id=0),))
 
         self.assertEqual(mappings[0].pci_bdf, "0000:45:00.0")
         self.assertEqual(mappings[0].source, provider.name)
+
+    def test_explicit_ascend_provider_maps_visible_devices(self) -> None:
+        tempdir, root = self._ascend_sysfs()
+        try:
+            platform = SglangTorchPlatform(FakeTorch(FakeProperties()))
+            provider = SglangRuntimeProvider(
+                platform,
+                requested_provider="ascend-sysfs-pci",
+                sysfs_root=root,
+                environ={"ASCEND_RT_VISIBLE_DEVICES": "0"},
+            )
+
+            mappings = provider.map_all((DeviceContext(framework="sglang", logical_device_id=0),))
+
+            self.assertEqual(mappings[0].pci_bdf, "0000:45:00.0")
+            self.assertEqual(mappings[0].source, "ascend-sysfs-pci")
+        finally:
+            tempdir.cleanup()
+
+    def test_auto_provider_selects_ascend_sysfs_from_visibility(self) -> None:
+        tempdir, root = self._ascend_sysfs()
+        try:
+            platform = SglangTorchPlatform(FakeTorch(FakeProperties()))
+            provider = SglangRuntimeProvider(
+                platform,
+                sysfs_root=root,
+                environ={"ASCEND_RT_VISIBLE_DEVICES": "0"},
+            )
+
+            mappings = provider.map_all((DeviceContext(framework="sglang", logical_device_id=0),))
+
+            self.assertEqual(mappings[0].source, "ascend-sysfs-pci")
+        finally:
+            tempdir.cleanup()
+
+    def test_ascend_provider_resolves_sglang_numa_node(self) -> None:
+        tempdir, root = self._ascend_sysfs()
+        try:
+
+            class Cuda:
+                def device_count(self) -> int:
+                    return 1
+
+                def get_device_properties(self, _device_id: int) -> FakeProperties:
+                    return FakeProperties()
+
+            fake_torch = types.SimpleNamespace(cuda=Cuda())
+            with (
+                patch.dict("os.environ", {"ASCEND_RT_VISIBLE_DEVICES": "0"}, clear=False),
+                patch(
+                    "kunpeng_affinity.topology.analyzer.os.sched_getaffinity",
+                    return_value=set(range(8, 12)),
+                    create=True,
+                ),
+            ):
+                node = resolve_sglang_numa_node(
+                    0,
+                    torch_module=fake_torch,
+                    sysfs_root=root,
+                    provider="ascend-sysfs-pci",
+                )
+
+            self.assertEqual(node, 1)
+        finally:
+            tempdir.cleanup()
 
     def test_runtime_bdf_query_failure_is_a_discovery_error(self) -> None:
         class Cuda(FakeCuda):
@@ -104,6 +203,15 @@ class SglangRuntimeProviderTest(unittest.TestCase):
 
 
 class SglangHookDecisionTest(unittest.TestCase):
+    def test_generic_node_forwards_ascend_provider(self) -> None:
+        with (
+            patch("kunpeng_affinity.sglang_plugin._check_generic_binding_prerequisites"),
+            patch("kunpeng_affinity.adapters.sglang_generic.resolve_sglang_numa_node", return_value=6) as resolve,
+        ):
+            self.assertEqual(_generic_node(0, "ascend-sysfs-pci"), 6)
+
+        self.assertEqual(resolve.call_args.kwargs["provider"], "ascend-sysfs-pci")
+
     def test_native_node_classification_has_explicit_states(self) -> None:
         self.assertEqual(
             _classify_native_node(2, "auto").status,

@@ -139,7 +139,7 @@ def install(*, mode: PluginMode | None = None) -> None:
         if mode is PluginMode.STRICT:
             raise AffinityIntegrationError(
                 f"unsupported vLLM version {detected_version}; validated base "
-                f"versions are {_TARGET_VERSION} and {_AUXILIARY_DEMO_VERSION}",
+                f"versions are {sorted(_SUPPORTED_BASE_VERSIONS)}",
                 code="FRAMEWORK_VERSION_UNSUPPORTED",
             )
         logger.warning(

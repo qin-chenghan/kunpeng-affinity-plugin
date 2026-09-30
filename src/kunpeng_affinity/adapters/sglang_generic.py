@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import os
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from kunpeng_affinity.core.errors import DeviceMappingError
 from kunpeng_affinity.core.models import DeviceContext, DeviceMapping, ProbeResult
+from kunpeng_affinity.providers.ascend_sysfs import AscendSysfsProvider
 from kunpeng_affinity.providers.iluvatar_runtime import IluvatarRuntimeProvider
 from kunpeng_affinity.topology.analyzer import normalize_bdf
 
@@ -118,14 +120,20 @@ class SglangRuntimeProvider:
         self,
         platform: SglangTorchPlatform,
         *,
+        requested_provider: str = "auto",
         ixsmi: str = "ixsmi",
         timeout: float = 10.0,
         command_runner: Any | None = None,
+        sysfs_root: Path | str = Path("/sys"),
+        environ: Mapping[str, str] | None = None,
     ) -> None:
         self.platform = platform
+        self.requested_provider = requested_provider
         self.ixsmi = ixsmi
         self.timeout = timeout
         self.command_runner = command_runner
+        self.sysfs_root = Path(sysfs_root)
+        self.environ = os.environ if environ is None else environ
 
     def probe(self, contexts: Sequence[DeviceContext]) -> ProbeResult:
         try:
@@ -135,6 +143,20 @@ class SglangRuntimeProvider:
         return ProbeResult(provider=self.name, supported=True)
 
     def map_all(self, contexts: Sequence[DeviceContext]) -> tuple[DeviceMapping, ...]:
+        if self.requested_provider == AscendSysfsProvider.name:
+            return AscendSysfsProvider(
+                sysfs_root=self.sysfs_root,
+                environ=self.environ,
+            ).map_all(contexts)
+
+        if self.requested_provider == IluvatarRuntimeProvider.name:
+            return IluvatarRuntimeProvider(
+                self.platform,
+                ixsmi=self.ixsmi,
+                timeout=self.timeout,
+                command_runner=self.command_runner,
+            ).map_all(contexts)
+
         # Prefer a complete direct runtime BDF mapping when the runtime exposes it.
         direct = tuple(self.platform.get_device_bdf(c.logical_device_id) for c in contexts)
         if all(bdf is not None for bdf in direct):
@@ -152,6 +174,11 @@ class SglangRuntimeProvider:
                 "SGLang runtime returned only a partial direct BDF mapping",
                 code="DEVICE_MAPPING_PARTIAL",
             )
+        if self.requested_provider == "auto" and self.environ.get("ASCEND_RT_VISIBLE_DEVICES") is not None:
+            return AscendSysfsProvider(
+                sysfs_root=self.sysfs_root,
+                environ=self.environ,
+            ).map_all(contexts)
         # A complete direct mapping is required; otherwise use UUID-to-BDF evidence.
         provider = IluvatarRuntimeProvider(
             self.platform,
@@ -178,6 +205,7 @@ def resolve_sglang_numa_node(
     torch_module: Any | None = None,
     sysfs_root: Path | str = Path("/sys"),
     ixsmi: str = "ixsmi",
+    provider: str = "auto",
 ) -> int:
     """Resolve one visible SGLang GPU after validating the complete batch."""
     # Reuse the shared batch resolver so SGLang and vLLM apply the same
@@ -197,7 +225,12 @@ def resolve_sglang_numa_node(
         )
     contexts = tuple(DeviceContext(framework="sglang", logical_device_id=device_id) for device_id in range(count))
     resolver = GenericAffinityProvider(
-        SglangRuntimeProvider(platform, ixsmi=ixsmi),
+        SglangRuntimeProvider(
+            platform,
+            requested_provider=provider,
+            ixsmi=ixsmi,
+            sysfs_root=sysfs_root,
+        ),
         sysfs_root=sysfs_root,
         snapshot_metadata={
             "adapter": "sglang.numa_query.v1",

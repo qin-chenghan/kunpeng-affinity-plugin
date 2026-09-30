@@ -136,12 +136,13 @@ explicit server_args.numa_node -> SGLang native query -> generic runtime BDF/NUM
 ```
 
 The SGLang adapter uses a small Torch runtime facade. If the runtime exposes a
-direct PCI BDF, it is used; otherwise a runtime UUID is joined to the Iluvatar
-`ixsmi` UUID/BDF inventory. The generic Linux topology analyzer then proves the
-NUMA node and CPU intersection. If discovery fails, `auto` returns `None` so
-SGLang's normal fallback behavior continues; `strict` raises from the query
-hook. `SGLANG_AUTO_NUMA_BIND=0` and explicit `server_args.numa_node` are always
-respected.
+direct PCI BDF, it is used. Otherwise, `ASCEND_RT_VISIBLE_DEVICES` selects the
+Ascend sysfs BDF-to-device mapping; on other platforms, a runtime UUID is
+joined to the Iluvatar `ixsmi` UUID/BDF inventory. The generic Linux topology
+analyzer then proves the NUMA node and CPU intersection. If discovery fails,
+`auto` returns `None` so SGLang's normal fallback behavior continues; `strict`
+raises from the query hook. `SGLANG_AUTO_NUMA_BIND=0` and explicit
+`server_args.numa_node` are always respected.
 
 This first adapter covers SGLang 0.5.18's ordinary Engine subprocess path.
 The Data Parallel controller and Ray actor path have separate launch/binding
@@ -350,7 +351,7 @@ require vLLM, SGLang, CUDA, or a specific CPU architecture. The vLLM entry point
 is activated only when a compatible vLLM process loads general plugins.
 
 The current Hook implements automatic `native -> generic -> skip/fail`
-selection, but the full vLLM service lifecycle and target non-native GPU
-Runtime Provider are not yet complete. The formal delivery baseline is
+selection. Real target-framework service lifecycles and multi-process
+acceptance remain environment-specific validation work. The formal delivery baseline is
 `docs/kunpeng-affinity-plugin-delivery-design.md`; it defines the implementation
 status, compatibility boundaries, and remaining development steps.

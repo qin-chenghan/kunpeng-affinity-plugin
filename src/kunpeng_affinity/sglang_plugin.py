@@ -36,7 +36,12 @@ def _env_bool(name: str, default: bool = True) -> bool:
 
 def _generic_node(gpu_id: int, provider: str) -> int:
     # Resolve one visible SGLang GPU through the shared runtime and Linux path.
-    if provider not in {"auto", "sglang-runtime-pci", "iluvatar-runtime-pci"}:
+    if provider not in {
+        "auto",
+        "sglang-runtime-pci",
+        "iluvatar-runtime-pci",
+        "ascend-sysfs-pci",
+    }:
         raise PluginConfigError(
             f"provider {provider!r} is not registered for SGLang",
             code="PROVIDER_NOT_FOUND",
@@ -44,7 +49,11 @@ def _generic_node(gpu_id: int, provider: str) -> int:
     _check_generic_binding_prerequisites()
     from kunpeng_affinity.adapters.sglang_generic import resolve_sglang_numa_node
 
-    return resolve_sglang_numa_node(gpu_id, ixsmi=os.environ.get("KUNPENG_AFFINITY_IXSMI", "ixsmi"))
+    return resolve_sglang_numa_node(
+        gpu_id,
+        ixsmi=os.environ.get("KUNPENG_AFFINITY_IXSMI", "ixsmi"),
+        provider=provider,
+    )
 
 
 def _check_generic_binding_prerequisites() -> None:
@@ -176,6 +185,7 @@ def register() -> None:
         "auto",
         "sglang-runtime-pci",
         "iluvatar-runtime-pci",
+        "ascend-sysfs-pci",
     }:
         raise PluginConfigError(
             f"provider {config.provider!r} is not registered for SGLang",
