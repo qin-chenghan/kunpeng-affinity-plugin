@@ -90,18 +90,12 @@ def _classify_native_node(
             return NativeOutcome(
                 status=NativeStatus.PRESERVE_NATIVE,
                 failure_code="NATIVE_RESULT_EMPTY",
-                evidence=(
-                    "SGLang returned no node; Runtime Provider coverage has not "
-                    "yet been proven",
-                ),
+                evidence=("SGLang returned no node; Runtime Provider coverage has not yet been proven",),
             )
         return NativeOutcome(
             status=NativeStatus.FALLBACK_ALLOWED,
             failure_code="NATIVE_QUERY_UNAVAILABLE",
-            evidence=(
-                "SGLang returned no node and Runtime Provider "
-                f"{provider!r} proved a complete candidate result",
-            ),
+            evidence=(f"SGLang returned no node and Runtime Provider {provider!r} proved a complete candidate result",),
         )
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return NativeOutcome(

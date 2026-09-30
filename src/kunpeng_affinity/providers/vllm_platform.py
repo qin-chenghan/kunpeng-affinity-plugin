@@ -24,9 +24,7 @@ class VllmPlatformProvider:
 
     def __init__(self, platform: Any) -> None:
         self.platform = platform
-        self._probe_cache: tuple[
-            tuple[DeviceContext, ...], tuple[DeviceMapping, ...]
-        ] | None = None
+        self._probe_cache: tuple[tuple[DeviceContext, ...], tuple[DeviceMapping, ...]] | None = None
 
     def probe(self, contexts: Sequence[DeviceContext]) -> ProbeResult:
         ordered_contexts = tuple(contexts)
@@ -50,9 +48,7 @@ class VllmPlatformProvider:
             return cached[1]
         return self._map_all(ordered_contexts)
 
-    def _map_all(
-        self, contexts: tuple[DeviceContext, ...]
-    ) -> tuple[DeviceMapping, ...]:
+    def _map_all(self, contexts: tuple[DeviceContext, ...]) -> tuple[DeviceMapping, ...]:
         bus_ids = self._bus_ids()
         mappings: list[DeviceMapping] = []
         seen_bdfs: set[str] = set()
@@ -62,16 +58,14 @@ class VllmPlatformProvider:
                 raw_bdf = bus_ids[physical_id]
             except (KeyError, TypeError) as exc:
                 raise DeviceMappingError(
-                    f"vLLM platform has no PCI BDF for physical device "
-                    f"{physical_id}",
+                    f"vLLM platform has no PCI BDF for physical device {physical_id}",
                     code="DEVICE_MAPPING_MISSING",
                 ) from exc
             try:
                 bdf = normalize_bdf(raw_bdf)
             except (TypeError, ValueError) as exc:
                 raise DeviceMappingError(
-                    f"vLLM platform returned invalid BDF for physical device "
-                    f"{physical_id}: {raw_bdf!r}",
+                    f"vLLM platform returned invalid BDF for physical device {physical_id}: {raw_bdf!r}",
                     code="BDF_INVALID",
                 ) from exc
             if bdf in seen_bdfs:
@@ -126,8 +120,7 @@ class VllmPlatformProvider:
             physical_id = method(context.logical_device_id)
         except (IndexError, TypeError, ValueError, RuntimeError) as exc:
             raise DeviceMappingError(
-                f"vLLM platform could not map logical device "
-                f"{context.logical_device_id} to a physical device: {exc}",
+                f"vLLM platform could not map logical device {context.logical_device_id} to a physical device: {exc}",
                 code="DEVICE_MAPPING_UNAVAILABLE",
             ) from exc
         if not isinstance(physical_id, int) or physical_id < 0:

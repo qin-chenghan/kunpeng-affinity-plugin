@@ -37,9 +37,7 @@ class VllmConfigCommitTest(unittest.TestCase):
     def test_rejects_conflicting_concurrent_commit(self) -> None:
         config = types.SimpleNamespace(numa_bind_nodes=[2])
 
-        with self.assertRaisesRegex(
-            AffinityDiscoveryError, "changed concurrently"
-        ) as captured:
+        with self.assertRaisesRegex(AffinityDiscoveryError, "changed concurrently") as captured:
             commit_vllm_nodes(config, [1])
 
         self.assertEqual(captured.exception.code, "CONCURRENT_CONFIG_CONFLICT")
@@ -82,6 +80,7 @@ class VllmConfigCommitTest(unittest.TestCase):
 
                 self.assertEqual(config.numa_bind_nodes, [1])
                 self.assertFalse(hasattr(config, "_kunpeng_affinity_transaction"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -91,17 +91,13 @@ class TopologyAnalyzerTest(unittest.TestCase):
             local_cpulist="0-3",
         )
 
-        result = analyze_bdf(
-            "00000000:01:00.0", sysfs_root=self.root, allowed_cpus={2, 3, 4}
-        )
+        result = analyze_bdf("00000000:01:00.0", sysfs_root=self.root, allowed_cpus={2, 3, 4})
 
         self.assertEqual(result.status, ResultStatus.SUCCESS)
         self.assertEqual(result.numa_node, 0)
         self.assertEqual(result.numa_source, "endpoint")
         self.assertEqual(result.target_cpus, frozenset({2, 3}))
-        self.assertEqual(
-            [node.role for node in result.pci_path], ["endpoint", "pci-bridge"]
-        )
+        self.assertEqual([node.role for node in result.pci_path], ["endpoint", "pci-bridge"])
 
     def test_cli_emits_structured_result(self) -> None:
         fixture = SysfsFixture(self.root, {0: "0-3"}, online="0-3")
@@ -193,7 +189,7 @@ class TopologyAnalyzerTest(unittest.TestCase):
         self.assertFalse(result.bindable)
 
     def test_broken_parent_chain_fails(self) -> None:
-        fixture = SysfsFixture(self.root, {0: "0-3"}, online="0-3")
+        SysfsFixture(self.root, {0: "0-3"}, online="0-3")
         endpoint = self.root / "devices" / "0000:01:00.0"
         endpoint.mkdir()
         (endpoint / "numa_node").write_text("0", encoding="ascii")

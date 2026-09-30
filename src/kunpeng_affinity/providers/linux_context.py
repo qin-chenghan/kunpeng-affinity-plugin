@@ -44,8 +44,7 @@ class LinuxContextProvider:
                 bdf = normalize_bdf(raw_bdf)
             except (TypeError, ValueError) as exc:
                 raise DeviceMappingError(
-                    f"invalid BDF for logical device {context.logical_device_id}: "
-                    f"{raw_bdf!r}",
+                    f"invalid BDF for logical device {context.logical_device_id}: {raw_bdf!r}",
                     code="BDF_INVALID",
                 ) from exc
             if bdf in seen_bdfs:

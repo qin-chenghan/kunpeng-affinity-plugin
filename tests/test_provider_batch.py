@@ -139,9 +139,7 @@ class LinuxContextProviderTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.root = Path(self.tempdir.name)
-        (self.root / "devices/pci0000:00/0000:00:01.0/0000:01:00.0").mkdir(
-            parents=True
-        )
+        (self.root / "devices/pci0000:00/0000:00:01.0/0000:01:00.0").mkdir(parents=True)
         (self.root / "bus/pci/devices").mkdir(parents=True)
 
     def tearDown(self) -> None:
@@ -225,12 +223,8 @@ class LinuxContextProviderTest(unittest.TestCase):
     def test_probe_rejects_duplicate_bdfs(self) -> None:
         provider = LinuxContextProvider(sysfs_root=self.root)
         contexts = (
-            DeviceContext(
-                framework="test", logical_device_id=0, explicit_bdf="01:00.0"
-            ),
-            DeviceContext(
-                framework="test", logical_device_id=1, explicit_bdf="01:00.0"
-            ),
+            DeviceContext(framework="test", logical_device_id=0, explicit_bdf="01:00.0"),
+            DeviceContext(framework="test", logical_device_id=1, explicit_bdf="01:00.0"),
         )
 
         result = provider.probe(contexts)
@@ -262,9 +256,7 @@ class VllmPlatformProviderTest(unittest.TestCase):
             [mapping.pci_bdf for mapping in mappings],
             ["0000:cd:00.0", "0000:ab:00.0"],
         )
-        self.assertEqual(
-            [mapping.physical_device_id for mapping in mappings], [1, 0]
-        )
+        self.assertEqual([mapping.physical_device_id for mapping in mappings], [1, 0])
         self.assertEqual(mappings[0].source, "vllm-platform-pci")
 
     def test_probe_rejects_platform_without_identity_api(self) -> None:
@@ -328,12 +320,8 @@ class GenericAffinityProviderTest(unittest.TestCase):
         )
         result = resolver.resolve_all((context(1), context(0)))
         self.assertTrue(result.committable)
-        self.assertEqual(
-            [item.context.logical_device_id for item in result.ordered_results], [1, 0]
-        )
-        self.assertEqual(
-            [item.affinity.numa_node for item in result.ordered_results], [1, 0]
-        )
+        self.assertEqual([item.context.logical_device_id for item in result.ordered_results], [1, 0])
+        self.assertEqual([item.affinity.numa_node for item in result.ordered_results], [1, 0])
         self.assertEqual(
             [item.affinity.status for item in result.ordered_results],
             [ResultStatus.SUCCESS, ResultStatus.SUCCESS],
@@ -456,9 +444,7 @@ class GenericAffinityProviderTest(unittest.TestCase):
             allowed_cpus=set(range(8)),
         )
 
-        result = resolver.resolve_all(
-            (DeviceContext(framework="test", logical_device_id=0),)
-        )
+        result = resolver.resolve_all((DeviceContext(framework="test", logical_device_id=0),))
 
         self.assertTrue(result.committable)
         self.assertIsNotNone(result.visibility_fingerprint)

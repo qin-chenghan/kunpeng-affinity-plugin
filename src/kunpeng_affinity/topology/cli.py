@@ -15,8 +15,7 @@ from kunpeng_affinity.topology.models import AffinityResult, ResultStatus
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Read Linux sysfs and suggest CPUs for trusted PCI BDFs. "
-            "This command never changes process affinity."
+            "Read Linux sysfs and suggest CPUs for trusted PCI BDFs. This command never changes process affinity."
         )
     )
     parser.add_argument(
@@ -47,10 +46,7 @@ def _print_result(result: AffinityResult) -> None:
     print(f"mapping:       {result.device_mapping_source}")
     print("pcie_path:")
     for index, node in enumerate(result.pci_path):
-        print(
-            f"  [{index}] {node.bdf} role={node.role} "
-            f"class={node.pci_class or '-'} numa={node.numa_node}"
-        )
+        print(f"  [{index}] {node.bdf} role={node.role} class={node.pci_class or '-'} numa={node.numa_node}")
     print(f"root_bus:      {result.root_bus_path or '-'}")
     print(f"numa_node:     {result.numa_node if result.numa_node is not None else '-'}")
     print(f"numa_source:   {result.numa_source or '-'}")
@@ -66,11 +62,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     try:
-        allowed = (
-            parse_cpulist(args.allowed_cpus)
-            if args.allowed_cpus is not None
-            else None
-        )
+        allowed = parse_cpulist(args.allowed_cpus) if args.allowed_cpus is not None else None
     except CpuListError as exc:
         parser.error(str(exc))
 

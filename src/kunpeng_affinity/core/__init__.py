@@ -14,8 +14,8 @@ from kunpeng_affinity.core.models import (
     DeviceResolution,
     NativeOutcome,
     NativeStatus,
-    ProbeStatus,
     ProbeResult,
+    ProbeStatus,
 )
 
 __all__ = [

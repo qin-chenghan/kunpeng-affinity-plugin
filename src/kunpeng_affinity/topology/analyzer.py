@@ -42,14 +42,8 @@ def normalize_bdf(value: str) -> str:
     raw_domain = match.group("domain") or "0000"
     domain_number = int(raw_domain, 16)
     if domain_number > 0xFFFF:
-        raise ValueError(
-            f"PCI domain {raw_domain!r} cannot be represented by Linux "
-            "dddd:bb:ss.f sysfs names"
-        )
-    return (
-        f"{domain_number:04x}:{match.group('bus').lower()}:"
-        f"{match.group('slot').lower()}.{match.group('function')}"
-    )
+        raise ValueError(f"PCI domain {raw_domain!r} cannot be represented by Linux dddd:bb:ss.f sysfs names")
+    return f"{domain_number:04x}:{match.group('bus').lower()}:{match.group('slot').lower()}.{match.group('function')}"
 
 
 def _read_optional(path: Path) -> str | None:
@@ -107,17 +101,13 @@ def _collect_path(sysfs_root: Path, bdf: str) -> _PathData:
     try:
         endpoint.relative_to(devices_root)
     except ValueError as exc:
-        raise TopologyError(
-            f"PCI device {bdf} resolves outside {devices_root}: {endpoint}"
-        ) from exc
+        raise TopologyError(f"PCI device {bdf} resolves outside {devices_root}: {endpoint}") from exc
     try:
         endpoint_bdf = normalize_bdf(endpoint.name)
     except ValueError as exc:
         raise TopologyError(f"PCI link target is not a function path: {endpoint}") from exc
     if endpoint_bdf != bdf:
-        raise TopologyError(
-            f"PCI link {device_link} resolves to mismatched function {endpoint_bdf}"
-        )
+        raise TopologyError(f"PCI link {device_link} resolves to mismatched function {endpoint_bdf}")
 
     records: list[tuple[str, Path, str | None, int | None]] = []
     current = endpoint
@@ -125,9 +115,7 @@ def _collect_path(sysfs_root: Path, bdf: str) -> _PathData:
         try:
             current_bdf = normalize_bdf(current.name)
         except ValueError as exc:
-            raise TopologyError(
-                f"PCI parent chain is incomplete before root bus: {current}"
-            ) from exc
+            raise TopologyError(f"PCI parent chain is incomplete before root bus: {current}") from exc
         records.append(
             (
                 current_bdf,
@@ -143,9 +131,7 @@ def _collect_path(sysfs_root: Path, bdf: str) -> _PathData:
         try:
             parent.relative_to(devices_root)
         except ValueError as exc:
-            raise TopologyError(
-                f"PCI parent chain leaves sysfs devices tree at {parent}"
-            ) from exc
+            raise TopologyError(f"PCI parent chain leaves sysfs devices tree at {parent}") from exc
         current = parent
 
     nodes = tuple(
@@ -193,30 +179,20 @@ def _resolve_numa(
             continue
         if path_node.numa_node not in inventory:
             raise TopologyError(
-                f"{path_node.bdf} references NUMA node {path_node.numa_node}, "
-                "but that node is missing or has no CPUs"
+                f"{path_node.bdf} references NUMA node {path_node.numa_node}, but that node is missing or has no CPUs"
             )
         source = "endpoint" if index == 0 else f"ancestor:{path_node.bdf}"
         candidates.append((path_node.numa_node, source))
 
-    local_cpus = _read_cpulist(
-        path_data.real_endpoint / "local_cpulist", required=False
-    )
+    local_cpus = _read_cpulist(path_data.real_endpoint / "local_cpulist", required=False)
     if local_cpus:
-        matching_nodes = [
-            node for node, node_cpus in inventory.items() if local_cpus <= node_cpus
-        ]
+        matching_nodes = [node for node, node_cpus in inventory.items() if local_cpus <= node_cpus]
         if len(matching_nodes) == 1:
             candidates.append((matching_nodes[0], "endpoint:local_cpulist"))
         elif not matching_nodes:
-            raise TopologyError(
-                "endpoint local_cpulist is not contained in any single NUMA node"
-            )
+            raise TopologyError("endpoint local_cpulist is not contained in any single NUMA node")
         else:
-            diagnostics.append(
-                "endpoint local_cpulist matches multiple NUMA nodes and is not "
-                "used as unique evidence"
-            )
+            diagnostics.append("endpoint local_cpulist matches multiple NUMA nodes and is not used as unique evidence")
 
     if not candidates:
         return None, None, tuple(diagnostics)
@@ -274,11 +250,7 @@ def _result(
         online_cpus=online_cpus,
         allowed_cpus=allowed_cpus,
         target_cpus=target_cpus,
-        cpu_source=(
-            "node cpulist intersect online CPUs intersect current affinity"
-            if target_cpus
-            else None
-        ),
+        cpu_source=("node cpulist intersect online CPUs intersect current affinity" if target_cpus else None),
         diagnostics=diagnostics,
     )
 
@@ -319,8 +291,7 @@ def analyze_bdf(
                 status=ResultStatus.FAILED,
                 failure_code="NUMA_UNKNOWN",
                 path_data=path_data,
-                diagnostics=diagnostics
-                + ("NUMA node could not be proven from PCI sysfs",),
+                diagnostics=diagnostics + ("NUMA node could not be proven from PCI sysfs",),
             )
 
         # Restrict the suggested CPUs to CPUs that are online and allowed here.
@@ -328,24 +299,16 @@ def analyze_bdf(
         node_cpus = inventory[numa_node]
         if not node_cpus:
             raise TopologyError(f"NUMA node {numa_node} has an empty CPU list")
-        online_cpus = _read_cpulist(
-            root / "devices/system/cpu/online", required=True
-        )
+        online_cpus = _read_cpulist(root / "devices/system/cpu/online", required=True)
         assert online_cpus is not None
         if not online_cpus:
             raise TopologyError("online CPU list is empty")
-        effective_allowed = (
-            frozenset(allowed_cpus)
-            if allowed_cpus is not None
-            else _current_allowed_cpus()
-        )
+        effective_allowed = frozenset(allowed_cpus) if allowed_cpus is not None else _current_allowed_cpus()
         if not effective_allowed:
             raise TopologyError("current process CPU affinity is empty")
         target = node_cpus & online_cpus & effective_allowed
         if not target:
-            raise TopologyError(
-                f"NUMA node {numa_node} has no CPUs in the online and allowed sets"
-            )
+            raise TopologyError(f"NUMA node {numa_node} has no CPUs in the online and allowed sets")
         return _result(
             input_bdf=bdf,
             normalized_bdf=normalized,

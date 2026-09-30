@@ -88,12 +88,8 @@ def _print_host_inventory(sysfs_root: Path) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Run the read-only topology analyzer against this Linux host."
-    )
-    parser.add_argument(
-        "--sysfs-root", type=Path, default=Path("/sys"), help="default: /sys"
-    )
+    parser = argparse.ArgumentParser(description="Run the read-only topology analyzer against this Linux host.")
+    parser.add_argument("--sysfs-root", type=Path, default=Path("/sys"), help="default: /sys")
     parser.add_argument(
         "--bdf",
         action="append",

@@ -10,18 +10,14 @@ from kunpeng_affinity.adapters.sglang_generic import (
     SglangTorchPlatform,
     resolve_sglang_numa_node,
 )
+from kunpeng_affinity.config import CpuPolicy, PluginConfig, PluginMode
 from kunpeng_affinity.core.errors import (
     DeviceMappingError,
     NativeContractError,
     PluginConfigError,
 )
 from kunpeng_affinity.core.models import DeviceContext, NativeStatus
-from kunpeng_affinity.sglang_plugin import _around_numa_query
-from kunpeng_affinity.sglang_plugin import _classify_native_node
-from kunpeng_affinity.config import PluginMode
-from kunpeng_affinity.config import CpuPolicy, PluginConfig
-from kunpeng_affinity.sglang_plugin import register
-
+from kunpeng_affinity.sglang_plugin import _around_numa_query, _classify_native_node, register
 
 UUID_0 = "8631681a-860d-5d5c-8937-fc4efe2beea4"
 
@@ -46,21 +42,15 @@ class FakeTorch:
 
 
 def completed(output: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(
-        args=["ixsmi"], returncode=0, stdout=output, stderr=""
-    )
+    return subprocess.CompletedProcess(args=["ixsmi"], returncode=0, stdout=output, stderr="")
 
 
 class SglangRuntimeProviderTest(unittest.TestCase):
     def test_direct_runtime_bdf_is_used_when_available(self) -> None:
-        platform = SglangTorchPlatform(
-            FakeTorch(FakeProperties(pci_bus_id="00000000:45:00.0"))
-        )
+        platform = SglangTorchPlatform(FakeTorch(FakeProperties(pci_bus_id="00000000:45:00.0")))
         provider = SglangRuntimeProvider(platform)
 
-        mappings = provider.map_all(
-            (DeviceContext(framework="sglang", logical_device_id=0),)
-        )
+        mappings = provider.map_all((DeviceContext(framework="sglang", logical_device_id=0),))
 
         self.assertEqual(mappings[0].pci_bdf, "0000:45:00.0")
         self.assertIn("PCI BDF", mappings[0].evidence[0])
@@ -73,9 +63,7 @@ class SglangRuntimeProviderTest(unittest.TestCase):
         platform = SglangTorchPlatform(FakeTorch(FakeProperties()))
         provider = SglangRuntimeProvider(platform, command_runner=lambda *a, **k: completed(output))
 
-        mappings = provider.map_all(
-            (DeviceContext(framework="sglang", logical_device_id=0),)
-        )
+        mappings = provider.map_all((DeviceContext(framework="sglang", logical_device_id=0),))
 
         self.assertEqual(mappings[0].pci_bdf, "0000:45:00.0")
         self.assertEqual(mappings[0].source, provider.name)
@@ -85,9 +73,7 @@ class SglangRuntimeProviderTest(unittest.TestCase):
             def get_device_pci_bus_id(self, _device_id: int) -> str:
                 raise RuntimeError("runtime unavailable")
 
-        platform = SglangTorchPlatform(
-            types.SimpleNamespace(cuda=Cuda(FakeProperties()))
-        )
+        platform = SglangTorchPlatform(types.SimpleNamespace(cuda=Cuda(FakeProperties())))
 
         with self.assertRaisesRegex(DeviceMappingError, "PCI BDF query failed"):
             platform.get_device_bdf(0)
@@ -102,8 +88,7 @@ class SglangRuntimeProviderTest(unittest.TestCase):
             committable=True,
             visibility_fingerprint="same",
             ordered_results=tuple(
-                types.SimpleNamespace(affinity=types.SimpleNamespace(numa_node=node))
-                for node in (1, 1, 3)
+                types.SimpleNamespace(affinity=types.SimpleNamespace(numa_node=node)) for node in (1, 1, 3)
             ),
         )
         with patch(
@@ -115,9 +100,7 @@ class SglangRuntimeProviderTest(unittest.TestCase):
         self.assertEqual(node, 3)
         self.assertEqual(resolve.call_count, 2)
         contexts = resolve.call_args_list[0].args[0]
-        self.assertEqual(
-            [context.logical_device_id for context in contexts], [0, 1, 2]
-        )
+        self.assertEqual([context.logical_device_id for context in contexts], [0, 1, 2])
 
 
 class SglangHookDecisionTest(unittest.TestCase):
@@ -151,9 +134,7 @@ class SglangHookDecisionTest(unittest.TestCase):
 
     def test_native_node_wins_over_generic_fallback(self) -> None:
         server_args = types.SimpleNamespace(numa_node=None)
-        with patch(
-            "kunpeng_affinity.sglang_plugin._generic_node", return_value=4
-        ) as generic:
+        with patch("kunpeng_affinity.sglang_plugin._generic_node", return_value=4) as generic:
             result = _around_numa_query(
                 lambda _args, _gpu: 2,
                 server_args,
@@ -167,9 +148,7 @@ class SglangHookDecisionTest(unittest.TestCase):
 
     def test_generic_node_is_used_when_native_query_is_empty(self) -> None:
         server_args = types.SimpleNamespace(numa_node=None)
-        with patch(
-            "kunpeng_affinity.sglang_plugin._generic_node", return_value=4
-        ) as generic:
+        with patch("kunpeng_affinity.sglang_plugin._generic_node", return_value=4) as generic:
             result = _around_numa_query(
                 lambda _args, _gpu: None,
                 server_args,
@@ -184,9 +163,7 @@ class SglangHookDecisionTest(unittest.TestCase):
     def test_expected_discovery_failure_skips_and_strict_failure_raises(self) -> None:
         server_args = types.SimpleNamespace(numa_node=None)
         error = DeviceMappingError("identity unavailable", code="RUNTIME_IDENTITY_UNAVAILABLE")
-        with patch(
-            "kunpeng_affinity.sglang_plugin._generic_node", side_effect=error
-        ):
+        with patch("kunpeng_affinity.sglang_plugin._generic_node", side_effect=error):
             self.assertIsNone(
                 _around_numa_query(
                     lambda _args, _gpu: None,

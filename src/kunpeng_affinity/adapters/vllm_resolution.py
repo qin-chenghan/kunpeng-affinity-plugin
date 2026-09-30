@@ -145,8 +145,7 @@ def resolve_automatic_nodes(
                 requested_provider=requested_provider,
             )
         logger.warning(
-            "[kunpeng-affinity] native NUMA result unavailable code=%s; "
-            "trying generic Linux topology",
+            "[kunpeng-affinity] native NUMA result unavailable code=%s; trying generic Linux topology",
             outcome.failure_code,
         )
 

@@ -12,7 +12,6 @@ from kunpeng_affinity.providers.ascend_sysfs import (
     parse_visible_device_ids,
 )
 
-
 TABLE = """0000:c1:00.0 ---> 0
 0000:c2:00.0 ---> 1
 0000:81:00.0 ---> 2
@@ -28,18 +27,13 @@ class AscendSysfsProviderTest(unittest.TestCase):
         for bdf in ("0000:c1:00.0", "0000:c2:00.0"):
             path = devices / bdf
             path.mkdir(parents=True)
-            (path / "devdrv_sysfs_bdf_to_devid").write_text(
-                TABLE, encoding="ascii"
-            )
+            (path / "devdrv_sysfs_bdf_to_devid").write_text(TABLE, encoding="ascii")
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
     def contexts(self, count: int = 2) -> tuple[DeviceContext, ...]:
-        return tuple(
-            DeviceContext(framework="vllm", logical_device_id=index)
-            for index in range(count)
-        )
+        return tuple(DeviceContext(framework="vllm", logical_device_id=index) for index in range(count))
 
     def test_maps_non_contiguous_visible_ids_without_runtime_import(self) -> None:
         provider = AscendSysfsProvider(
@@ -143,9 +137,7 @@ class AscendParsingTest(unittest.TestCase):
 
     def test_parse_mixed_bdf_forms_to_devid_table(self) -> None:
         self.assertEqual(
-            parse_bdf_to_devid_table(
-                "c1:00.0 ---> 0\n0000:C2:00.0 ---> 1\n"
-            ),
+            parse_bdf_to_devid_table("c1:00.0 ---> 0\n0000:C2:00.0 ---> 1\n"),
             {0: "0000:c1:00.0", 1: "0000:c2:00.0"},
         )
 

@@ -16,7 +16,6 @@ from kunpeng_affinity.adapters.vllm_contract import (
 )
 from kunpeng_affinity.core.errors import AffinityDiscoveryError
 
-
 _COMMIT_LOCK = threading.RLock()
 
 
@@ -86,8 +85,7 @@ def commit_vllm_nodes(
         previous_nodes = getattr(parallel_config, "numa_bind_nodes", None)
         if previous_nodes is not None and previous_nodes != candidate:
             raise AffinityDiscoveryError(
-                f"NUMA nodes changed concurrently from resolved {candidate} "
-                f"to {previous_nodes}",
+                f"NUMA nodes changed concurrently from resolved {candidate} to {previous_nodes}",
                 code="CONCURRENT_CONFIG_CONFLICT",
             )
 
@@ -148,9 +146,7 @@ def release_invalid_vllm_transaction(parallel_config: Any) -> None:
             and getattr(parallel_config, "numa_bind_nodes", None) == written
         ):
             if previous_present:
-                parallel_config.numa_bind_nodes = copy.deepcopy(
-                    marker.get("previous_nodes")
-                )
+                parallel_config.numa_bind_nodes = copy.deepcopy(marker.get("previous_nodes"))
             elif hasattr(parallel_config, "numa_bind_nodes"):
                 delattr(parallel_config, "numa_bind_nodes")
     if hasattr(parallel_config, TRANSACTION_MARKER):

@@ -15,9 +15,7 @@ from kunpeng_affinity.core.errors import (
 )
 
 
-def _argument(
-    args: tuple[Any, ...], kwargs: dict[str, Any], index: int, name: str, default: Any
-) -> Any:
+def _argument(args: tuple[Any, ...], kwargs: dict[str, Any], index: int, name: str, default: Any) -> Any:
     if name in kwargs:
         return kwargs[name]
     if len(args) > index:
@@ -37,9 +35,7 @@ class VllmCall:
     dp_local_rank: int | None
 
     @classmethod
-    def from_invocation(
-        cls, args: tuple[Any, ...], kwargs: dict[str, Any]
-    ) -> VllmCall:
+    def from_invocation(cls, args: tuple[Any, ...], kwargs: dict[str, Any]) -> VllmCall:
         vllm_config = _argument(args, kwargs, 0, "vllm_config", None)
         return cls(
             args=args,
@@ -111,8 +107,7 @@ def automatic_affinity_context(
         if force_generic or mode is PluginMode.STRICT:
             raise strict_failure(exc) from exc
         logger.warning(
-            "[kunpeng-affinity] automatic affinity skipped code=%s: %s; "
-            "launching without additional binding",
+            "[kunpeng-affinity] automatic affinity skipped code=%s: %s; launching without additional binding",
             exc.code,
             exc,
         )

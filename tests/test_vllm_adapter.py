@@ -12,12 +12,12 @@ from kunpeng_affinity.adapters.vllm_candidate import (
     resolve_vllm_visibility_fingerprint,
 )
 from kunpeng_affinity.adapters.vllm_commit import commit_vllm_nodes
-from kunpeng_affinity.adapters.vllm_eligibility import (
-    check_vllm_generic_eligibility,
-)
 from kunpeng_affinity.adapters.vllm_devices import (
     build_vllm_device_contexts,
     create_vllm_provider_registry,
+)
+from kunpeng_affinity.adapters.vllm_eligibility import (
+    check_vllm_generic_eligibility,
 )
 from kunpeng_affinity.adapters.vllm_native import classify_vllm_native_result
 from kunpeng_affinity.adapters.vllm_revalidation import (
@@ -88,9 +88,7 @@ class VllmGenericAdapterTest(unittest.TestCase):
         self.assertIsNotNone(batch.visibility_fingerprint)
 
     def test_generic_path_uses_injected_provider_registry(self) -> None:
-        registry = ProviderRegistry(
-            (StaticMappingProvider({0: "0000:ab:00.0"}),)
-        )
+        registry = ProviderRegistry((StaticMappingProvider({0: "0000:ab:00.0"}),))
 
         batch = resolve_vllm_generic_affinity(
             FakePlatform,
@@ -110,9 +108,7 @@ class VllmGenericAdapterTest(unittest.TestCase):
                 {"KUNPENG_AFFINITY_IXSMI": "/tmp/test-ixsmi"},
                 clear=False,
             ),
-            patch(
-                "kunpeng_affinity.adapters.vllm_devices.IluvatarRuntimeProvider"
-            ) as provider_type,
+            patch("kunpeng_affinity.adapters.vllm_devices.IluvatarRuntimeProvider") as provider_type,
         ):
             provider_type.name = "iluvatar-runtime-pci"
             provider_type.return_value.name = "iluvatar-runtime-pci"
@@ -124,10 +120,7 @@ class VllmGenericAdapterTest(unittest.TestCase):
         provider_type.assert_called_once_with(FakePlatform, ixsmi="/tmp/test-ixsmi")
 
     def test_explicit_ascend_provider_uses_sysfs_mapping(self) -> None:
-        attribute = (
-            self.root
-            / "bus/pci/devices/0000:ab:00.0/devdrv_sysfs_bdf_to_devid"
-        )
+        attribute = self.root / "bus/pci/devices/0000:ab:00.0/devdrv_sysfs_bdf_to_devid"
         attribute.write_text("0000:ab:00.0 ---> 0\n", encoding="ascii")
         with patch.dict(
             os.environ,
@@ -148,10 +141,7 @@ class VllmGenericAdapterTest(unittest.TestCase):
         self.assertEqual(provider.sysfs_root, self.root)
 
     def test_ascend_provider_resolves_complete_linux_affinity(self) -> None:
-        attribute = (
-            self.root
-            / "bus/pci/devices/0000:ab:00.0/devdrv_sysfs_bdf_to_devid"
-        )
+        attribute = self.root / "bus/pci/devices/0000:ab:00.0/devdrv_sysfs_bdf_to_devid"
         attribute.write_text("0000:ab:00.0 ---> 4\n", encoding="ascii")
         with patch.dict(
             os.environ,

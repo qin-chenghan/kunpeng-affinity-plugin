@@ -13,14 +13,14 @@ from kunpeng_affinity.adapters.vllm_commit import (
     commit_vllm_nodes,
     release_invalid_vllm_transaction,
 )
+from kunpeng_affinity.adapters.vllm_lifecycle import VllmAffinityAdapter
+from kunpeng_affinity.adapters.vllm_resolution import (
+    resolve_automatic_nodes,
+    revalidate_visibility,
+)
 from kunpeng_affinity.adapters.vllm_revalidation import (
     validate_inherited_vllm_transaction,
 )
-from kunpeng_affinity.adapters.vllm_resolution import (
-    revalidate_visibility,
-    resolve_automatic_nodes,
-)
-from kunpeng_affinity.adapters.vllm_lifecycle import VllmAffinityAdapter
 from kunpeng_affinity.config import (
     CpuPolicy,
     PluginMode,
@@ -43,9 +43,7 @@ _COMPATIBILITY_VERSION = "0.25.1"
 _AUXILIARY_DEMO_VERSION = "0.26.0"
 _FORCE_GENERIC_ENV = "KUNPENG_AFFINITY_VLLM_FORCE_GENERIC"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-_SUPPORTED_BASE_VERSIONS = frozenset(
-    {_TARGET_VERSION, _COMPATIBILITY_VERSION, _AUXILIARY_DEMO_VERSION}
-)
+_SUPPORTED_BASE_VERSIONS = frozenset({_TARGET_VERSION, _COMPATIBILITY_VERSION, _AUXILIARY_DEMO_VERSION})
 
 
 def _vllm_version() -> str:
@@ -65,8 +63,7 @@ def _is_supported_vllm_version(detected_version: str) -> bool:
         # Source-only checks may intentionally run without installing package
         # dependencies. Keep the fallback limited to the local-version form.
         return any(
-            detected_version.startswith(f"{base}+")
-            and bool(detected_version.removeprefix(f"{base}+"))
+            detected_version.startswith(f"{base}+") and bool(detected_version.removeprefix(f"{base}+"))
             for base in _SUPPORTED_BASE_VERSIONS
         )
     try:
@@ -128,10 +125,7 @@ def install(*, mode: PluginMode | None = None) -> None:
     parameters = set(inspect.signature(current).parameters)
     missing = _REQUIRED_PARAMETERS - parameters
     if missing:
-        message = (
-            "Unsupported vLLM configure_subprocess signature; missing parameters: "
-            + ", ".join(sorted(missing))
-        )
+        message = "Unsupported vLLM configure_subprocess signature; missing parameters: " + ", ".join(sorted(missing))
         if mode is PluginMode.STRICT:
             raise AffinityIntegrationError(
                 message,

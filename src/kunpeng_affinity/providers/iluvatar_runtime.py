@@ -124,9 +124,7 @@ class IluvatarRuntimeProvider:
         self.ixsmi = ixsmi
         self.timeout = timeout
         self._command_runner = command_runner or subprocess.run
-        self._probe_cache: tuple[
-            tuple[DeviceContext, ...], tuple[DeviceMapping, ...]
-        ] | None = None
+        self._probe_cache: tuple[tuple[DeviceContext, ...], tuple[DeviceMapping, ...]] | None = None
 
     def probe(self, contexts: Sequence[DeviceContext]) -> ProbeResult:
         ordered_contexts = tuple(contexts)
@@ -150,9 +148,7 @@ class IluvatarRuntimeProvider:
             return cached[1]
         return self._map_all(ordered_contexts)
 
-    def _map_all(
-        self, contexts: tuple[DeviceContext, ...]
-    ) -> tuple[DeviceMapping, ...]:
+    def _map_all(self, contexts: tuple[DeviceContext, ...]) -> tuple[DeviceMapping, ...]:
         # Query the host-wide inventory once, then join each visible device by UUID.
         uuid_to_row = self._inventory()
         mappings: list[DeviceMapping] = []
@@ -199,8 +195,7 @@ class IluvatarRuntimeProvider:
             return normalize_uuid(method(logical_device_id))
         except (TypeError, ValueError, NotImplementedError, RuntimeError, OSError) as exc:
             raise DeviceMappingError(
-                f"vLLM GPU UUID query failed for logical device "
-                f"{logical_device_id}: {exc}",
+                f"vLLM GPU UUID query failed for logical device {logical_device_id}: {exc}",
                 code="RUNTIME_IDENTITY_UNAVAILABLE",
             ) from exc
 

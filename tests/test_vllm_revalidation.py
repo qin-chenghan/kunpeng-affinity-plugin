@@ -132,8 +132,7 @@ class VllmRevalidationTest(unittest.TestCase):
 
         with (
             patch(
-                "kunpeng_affinity.adapters.vllm_revalidation."
-                "resolve_vllm_visibility_fingerprint",
+                "kunpeng_affinity.adapters.vllm_revalidation.resolve_vllm_visibility_fingerprint",
                 return_value="changed",
             ),
             self.assertRaisesRegex(AffinityDiscoveryError, "same-process reuse"),
@@ -174,8 +173,7 @@ class VllmRevalidationTest(unittest.TestCase):
                 create=True,
             ),
             patch(
-                "kunpeng_affinity.adapters.vllm_revalidation."
-                "resolve_vllm_consumed_device",
+                "kunpeng_affinity.adapters.vllm_revalidation.resolve_vllm_consumed_device",
                 return_value=current,
             ),
             self.assertRaisesRegex(AffinityDiscoveryError, "identity or NUMA"),

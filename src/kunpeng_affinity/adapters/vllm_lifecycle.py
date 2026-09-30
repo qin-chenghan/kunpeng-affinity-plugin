@@ -51,8 +51,7 @@ class VllmAffinityAdapter:
     def configure_subprocess(self, *args: Any, **kwargs: Any) -> Iterator[None]:
         call = VllmCall.from_invocation(args, kwargs)
         self.logger.warning(
-            "[kunpeng-affinity] pid=%s vllm=%s process_kind=%s "
-            "local_rank=%s dp_local_rank=%s numa_bind=%s",
+            "[kunpeng-affinity] pid=%s vllm=%s process_kind=%s local_rank=%s dp_local_rank=%s numa_bind=%s",
             os.getpid(),
             self.detected_version,
             call.process_kind,

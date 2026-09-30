@@ -49,17 +49,11 @@ def _consumed_indices(
     )
     get_gpu_index = getattr(numa_utils, "_get_gpu_index", None)
     try:
-        index = (
-            get_gpu_index(parallel_config, local_rank, dp_local_rank)
-            if callable(get_gpu_index)
-            else local_rank
-        )
+        index = get_gpu_index(parallel_config, local_rank, dp_local_rank) if callable(get_gpu_index) else local_rank
     except (IndexError, TypeError, ValueError, AttributeError) as exc:
         raise _invalid("vLLM could not compute the inherited worker GPU index") from exc
     _require(
-        isinstance(index, int)
-        and not isinstance(index, bool)
-        and 0 <= index < len(nodes),
+        isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(nodes),
         f"inherited worker GPU index {index!r} is outside marker nodes",
     )
     return [index]
@@ -97,9 +91,7 @@ def validate_inherited_vllm_transaction(
     try:
         allowed_cpus = frozenset(os.sched_getaffinity(0))
     except (AttributeError, OSError) as exc:
-        raise _invalid(
-            "cannot read child CPU constraints for inherited affinity"
-        ) from exc
+        raise _invalid("cannot read child CPU constraints for inherited affinity") from exc
 
     for index in _consumed_indices(
         numa_utils,
@@ -112,8 +104,7 @@ def validate_inherited_vllm_transaction(
         expected_mapping = marker.mappings[index]
         expected_resolution = marker.resolutions[index]
         _require(
-            isinstance(expected_mapping, dict)
-            and isinstance(expected_resolution, dict),
+            isinstance(expected_mapping, dict) and isinstance(expected_resolution, dict),
             "vLLM affinity transaction contains an invalid device snapshot",
         )
         current = resolve_vllm_consumed_device(

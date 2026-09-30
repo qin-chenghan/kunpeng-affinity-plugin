@@ -55,10 +55,7 @@ def classify_vllm_native_result(numa_utils: Any, platform: Any) -> NativeOutcome
             failure_code="DEVICE_COUNT_MISMATCH",
             evidence=(f"native_count={len(raw_nodes)} visible_count={count}",),
         )
-    if any(
-        not isinstance(node, int) or isinstance(node, bool) or node < 0
-        for node in raw_nodes
-    ):
+    if any(not isinstance(node, int) or isinstance(node, bool) or node < 0 for node in raw_nodes):
         return NativeOutcome(
             status=NativeStatus.INVALID,
             failure_code="NATIVE_RESULT_INVALID",

@@ -6,7 +6,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNNER = REPO_ROOT / "validation" / "iluvatar" / "run.sh"
 CONFIG = REPO_ROOT / "validation" / "iluvatar" / "config.env.example"
@@ -29,12 +28,8 @@ class IluvatarValidationSuiteTest(unittest.TestCase):
         self.assertIn(f"Configuration: {CONFIG}", output)
         self.assertIn("Result directory: /tmp/kunpeng-affinity-validation-", output)
         self.assertIn("Iluvatar Provider all devices", output)
-        self.assertIn(
-            "Editable install and entry points SKIP", output
-        )
-        self.assertIn(
-            "vLLM forced-generic dummy spawn  SKIP", output
-        )
+        self.assertIn("Editable install and entry points SKIP", output)
+        self.assertIn("vLLM forced-generic dummy spawn  SKIP", output)
 
     def test_enabled_config_selects_the_complete_validation_suite(self) -> None:
         config_text = CONFIG.read_text(encoding="utf-8").replace(

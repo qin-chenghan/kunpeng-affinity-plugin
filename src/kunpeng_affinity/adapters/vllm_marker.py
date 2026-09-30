@@ -74,8 +74,7 @@ def read_committed_vllm_marker(
         "vLLM affinity transaction capability profile is unsupported",
     )
     _require(
-        isinstance(marker.get("transaction_id"), str)
-        and bool(marker["transaction_id"]),
+        isinstance(marker.get("transaction_id"), str) and bool(marker["transaction_id"]),
         "vLLM affinity transaction has no transaction ID",
     )
 
@@ -120,10 +119,7 @@ def read_committed_vllm_marker(
         "vLLM affinity transaction has no written NUMA nodes",
     )
     _require(
-        all(
-            isinstance(node, int) and not isinstance(node, bool) and node >= 0
-            for node in nodes
-        ),
+        all(isinstance(node, int) and not isinstance(node, bool) and node >= 0 for node in nodes),
         "vLLM affinity transaction has invalid written NUMA nodes",
     )
     _require(

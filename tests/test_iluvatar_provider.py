@@ -10,7 +10,6 @@ from kunpeng_affinity.providers.iluvatar_runtime import (
     parse_ixsmi_rows,
 )
 
-
 UUID_0 = "8631681a-860d-5d5c-8937-fc4efe2beea4"
 UUID_1 = "62e9c670-d402-58b9-972f-f855b246d309"
 
@@ -24,15 +23,12 @@ class FakePlatform:
 
 
 def completed(output: str, returncode: int = 0) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(
-        args=["ixsmi"], returncode=returncode, stdout=output, stderr="query failed"
-    )
+    return subprocess.CompletedProcess(args=["ixsmi"], returncode=returncode, stdout=output, stderr="query failed")
 
 
 class IluvatarRuntimeProviderTest(unittest.TestCase):
     output = (
-        f"0, 00000000:45:00.0, GPU-{UUID_0}, Iluvatar BI-V150\n"
-        f"1, 00000000:48:00.0, GPU-{UUID_1}, Iluvatar BI-V150\n"
+        f"0, 00000000:45:00.0, GPU-{UUID_0}, Iluvatar BI-V150\n1, 00000000:48:00.0, GPU-{UUID_1}, Iluvatar BI-V150\n"
     )
 
     def contexts(self) -> tuple[DeviceContext, ...]:
@@ -58,9 +54,7 @@ class IluvatarRuntimeProviderTest(unittest.TestCase):
         self.assertEqual(rows[1], (1, UUID_1, "0000:48:00.0"))
 
     def test_maps_vllm_logical_devices_by_uuid_after_reordering(self) -> None:
-        provider = IluvatarRuntimeProvider(
-            FakePlatform, command_runner=self.runner()
-        )
+        provider = IluvatarRuntimeProvider(FakePlatform, command_runner=self.runner())
 
         mappings = provider.map_all(self.contexts())
 
@@ -75,9 +69,7 @@ class IluvatarRuntimeProviderTest(unittest.TestCase):
         class NoUuidPlatform:
             pass
 
-        provider = IluvatarRuntimeProvider(
-            NoUuidPlatform, command_runner=self.runner()
-        )
+        provider = IluvatarRuntimeProvider(NoUuidPlatform, command_runner=self.runner())
 
         result = provider.probe(self.contexts())
 
@@ -90,25 +82,16 @@ class IluvatarRuntimeProviderTest(unittest.TestCase):
             def get_device_uuid(cls, device_id: int) -> str:
                 return "GPU-00000000-0000-0000-0000-000000000000"
 
-        provider = IluvatarRuntimeProvider(
-            UnknownUuidPlatform, command_runner=self.runner()
-        )
+        provider = IluvatarRuntimeProvider(UnknownUuidPlatform, command_runner=self.runner())
 
-        result = provider.probe(
-            (DeviceContext(framework="vllm", logical_device_id=0),)
-        )
+        result = provider.probe((DeviceContext(framework="vllm", logical_device_id=0),))
 
         self.assertFalse(result.supported)
         self.assertIn("no PCI BDF", result.reason or "")
 
     def test_probe_rejects_duplicate_inventory_identity(self) -> None:
-        duplicate = (
-            f"0, 00000000:45:00.0, GPU-{UUID_0}\n"
-            f"1, 00000000:48:00.0, GPU-{UUID_0}\n"
-        )
-        provider = IluvatarRuntimeProvider(
-            FakePlatform, command_runner=self.runner(duplicate)
-        )
+        duplicate = f"0, 00000000:45:00.0, GPU-{UUID_0}\n1, 00000000:48:00.0, GPU-{UUID_0}\n"
+        provider = IluvatarRuntimeProvider(FakePlatform, command_runner=self.runner(duplicate))
 
         result = provider.probe(self.contexts())
 
@@ -116,9 +99,7 @@ class IluvatarRuntimeProviderTest(unittest.TestCase):
         self.assertIn("duplicate", result.reason or "")
 
     def test_probe_reports_command_failure(self) -> None:
-        provider = IluvatarRuntimeProvider(
-            FakePlatform, command_runner=self.runner(returncode=1)
-        )
+        provider = IluvatarRuntimeProvider(FakePlatform, command_runner=self.runner(returncode=1))
 
         result = provider.probe(self.contexts())
 

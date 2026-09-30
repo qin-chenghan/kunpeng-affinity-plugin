@@ -18,13 +18,13 @@ from kunpeng_affinity.adapters.vllm_resolution import (
     resolve_automatic_nodes,
     resolve_generic_nodes,
 )
-from kunpeng_affinity.core.identity import serialized_snapshot_fingerprint
-from kunpeng_affinity.core.models import NativeOutcome, NativeStatus
 from kunpeng_affinity.core.errors import (
     AffinityDiscoveryError,
     AffinityIntegrationError,
     PluginConfigError,
 )
+from kunpeng_affinity.core.identity import serialized_snapshot_fingerprint
+from kunpeng_affinity.core.models import NativeOutcome, NativeStatus
 
 
 class VllmPluginTest(unittest.TestCase):
@@ -50,9 +50,7 @@ class VllmPluginTest(unittest.TestCase):
             dp_local_rank=None,
             process_kind="worker",
         ):
-            self.calls.append(
-                (vllm_config, local_rank, dp_local_rank, process_kind)
-            )
+            self.calls.append((vllm_config, local_rank, dp_local_rank, process_kind))
             yield
 
         self.numa_utils = types.ModuleType("vllm.utils.numa_utils")
@@ -86,9 +84,7 @@ class VllmPluginTest(unittest.TestCase):
                         {"logical_device_id": index, "pci_bdf": f"0000:{index + 1:02x}:00.0"}
                         for index, _ in enumerate(nodes)
                     ],
-                    "resolutions": [
-                        {"numa_node": node} for node in nodes
-                    ],
+                    "resolutions": [{"numa_node": node} for node in nodes],
                 },
                 ensure_ascii=True,
                 separators=(",", ":"),
@@ -104,9 +100,7 @@ class VllmPluginTest(unittest.TestCase):
         )
 
     def test_vllm_call_parses_mixed_invocation_arguments(self) -> None:
-        config = types.SimpleNamespace(
-            parallel_config=types.SimpleNamespace(numa_bind=True)
-        )
+        config = types.SimpleNamespace(parallel_config=types.SimpleNamespace(numa_bind=True))
 
         call = VllmCall.from_invocation(
             (config, 2),
@@ -130,9 +124,7 @@ class VllmPluginTest(unittest.TestCase):
             vllm_plugin.install()
 
         with self.assertLogs(vllm_plugin.logger, level="WARNING") as captured:
-            with self.numa_utils.configure_subprocess(
-                config, 2, dp_local_rank=1, process_kind="EngineCore"
-            ):
+            with self.numa_utils.configure_subprocess(config, 2, dp_local_rank=1, process_kind="EngineCore"):
                 pass
 
         self.assertEqual(self.calls, [(config, 2, 1, "EngineCore")])
@@ -445,9 +437,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(
                 vllm_plugin,
                 "resolve_automatic_nodes",
-                return_value=self.resolution(
-                    [1], "generic", fingerprint="test-fingerprint"
-                ),
+                return_value=self.resolution([1], "generic", fingerprint="test-fingerprint"),
             ) as resolver,
             patch.object(vllm_plugin, "revalidate_visibility"),
             patch(
@@ -660,9 +650,7 @@ class VllmPluginTest(unittest.TestCase):
             patch.object(
                 vllm_plugin,
                 "resolve_automatic_nodes",
-                side_effect=AffinityDiscoveryError(
-                    "no trusted BDF", code="DEVICE_MAPPING_MISSING"
-                ),
+                side_effect=AffinityDiscoveryError("no trusted BDF", code="DEVICE_MAPPING_MISSING"),
             ),
             patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"),
         ):

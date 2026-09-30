@@ -100,9 +100,7 @@ class AscendSysfsProvider:
     ) -> None:
         self.sysfs_root = Path(sysfs_root)
         self.environ = os.environ if environ is None else environ
-        self._probe_cache: tuple[
-            tuple[DeviceContext, ...], tuple[DeviceMapping, ...]
-        ] | None = None
+        self._probe_cache: tuple[tuple[DeviceContext, ...], tuple[DeviceMapping, ...]] | None = None
 
     def probe(self, contexts: Sequence[DeviceContext]) -> ProbeResult:
         ordered_contexts = tuple(contexts)
@@ -126,12 +124,8 @@ class AscendSysfsProvider:
             return cached[1]
         return self._map_all(ordered_contexts)
 
-    def _map_all(
-        self, contexts: tuple[DeviceContext, ...]
-    ) -> tuple[DeviceMapping, ...]:
-        visible_ids = parse_visible_device_ids(
-            self.environ.get(ASCEND_VISIBLE_DEVICES)
-        )
+    def _map_all(self, contexts: tuple[DeviceContext, ...]) -> tuple[DeviceMapping, ...]:
+        visible_ids = parse_visible_device_ids(self.environ.get(ASCEND_VISIBLE_DEVICES))
         if len(visible_ids) != len(contexts):
             raise DeviceMappingError(
                 f"{ASCEND_VISIBLE_DEVICES} exposes {len(visible_ids)} devices, "
@@ -177,14 +171,7 @@ class AscendSysfsProvider:
 
     def _read_mapping(self) -> dict[int, str]:
         attribute_paths = sorted(
-            (
-                path
-                for path in (
-                    self.sysfs_root
-                    / "bus/pci/devices"
-                ).glob(f"*/{_BDF_TO_DEVID}")
-                if path.is_file()
-            ),
+            (path for path in (self.sysfs_root / "bus/pci/devices").glob(f"*/{_BDF_TO_DEVID}") if path.is_file()),
             key=lambda path: str(path),
         )
         if not attribute_paths:

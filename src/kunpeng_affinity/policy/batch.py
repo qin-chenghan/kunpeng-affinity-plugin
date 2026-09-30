@@ -67,9 +67,7 @@ class GenericAffinityProvider:
             )
         # Reject contexts that already disagree about the visible device set.
         fingerprints = {
-            context.visibility_fingerprint
-            for context in ordered_contexts
-            if context.visibility_fingerprint is not None
+            context.visibility_fingerprint for context in ordered_contexts if context.visibility_fingerprint is not None
         }
         if len(fingerprints) > 1:
             return BatchAffinityResult(
@@ -78,26 +76,20 @@ class GenericAffinityProvider:
                 visibility_fingerprint=None,
                 committable=False,
                 status=BatchStatus.MAPPING_FAILED,
-                failure_summary=(
-                    "VISIBILITY_CHANGED: contexts contain multiple visibility fingerprints",
-                ),
+                failure_summary=("VISIBILITY_CHANGED: contexts contain multiple visibility fingerprints",),
             )
         try:
             mapper = self.mapper
             if mapper is None:
                 try:
-                    mapper = self.registry.select(
-                        ordered_contexts, requested=self.requested_provider
-                    )
+                    mapper = self.registry.select(ordered_contexts, requested=self.requested_provider)
                 except ProviderSelectionError as exc:
                     status_by_code = {
                         "PROVIDER_NOT_FOUND": BatchStatus.UNSUPPORTED_PROVIDER,
                         "PROVIDER_AMBIGUOUS": BatchStatus.AMBIGUOUS_PROVIDER,
                         "PROVIDER_PROBE_FAILED": BatchStatus.PROVIDER_PROBE_FAILED,
                     }
-                    status = status_by_code.get(
-                        exc.code, BatchStatus.PROVIDER_PROBE_FAILED
-                    )
+                    status = status_by_code.get(exc.code, BatchStatus.PROVIDER_PROBE_FAILED)
                     return BatchAffinityResult(
                         ordered_results=(),
                         expected_device_count=len(ordered_contexts),
@@ -108,9 +100,7 @@ class GenericAffinityProvider:
                     )
             assert mapper is not None
             # Obtain and validate one ordered mapping before touching sysfs.
-            mappings, fingerprint = self.mapping_snapshot(
-                ordered_contexts, mapper=mapper
-            )
+            mappings, fingerprint = self.mapping_snapshot(ordered_contexts, mapper=mapper)
         except AffinityDiscoveryError as exc:
             return BatchAffinityResult(
                 ordered_results=(),
@@ -143,9 +133,7 @@ class GenericAffinityProvider:
                     "topology analyzer violated its result contract",
                     code="TOPOLOGY_CONTRACT_VIOLATION",
                 ) from exc
-            resolutions.append(
-                DeviceResolution(context=context, mapping=mapping, affinity=affinity)
-            )
+            resolutions.append(DeviceResolution(context=context, mapping=mapping, affinity=affinity))
             if not affinity.bindable:
                 failures.append(
                     f"logical device {context.logical_device_id}: "
@@ -162,9 +150,7 @@ class GenericAffinityProvider:
         committable = len(resolutions) == len(ordered_contexts) and not failures
         if committable:
             status = BatchStatus.COMMITTABLE
-        elif failure_statuses and all(
-            item is BatchStatus.CPUSET_FAILED for item in failure_statuses
-        ):
+        elif failure_statuses and all(item is BatchStatus.CPUSET_FAILED for item in failure_statuses):
             status = BatchStatus.CPUSET_FAILED
         else:
             status = BatchStatus.TOPOLOGY_FAILED
@@ -206,9 +192,7 @@ class GenericAffinityProvider:
             )
         try:
             raw_mappings = active_mapper.map_all(ordered_contexts)
-            mappings = tuple(
-                self._canonicalize_mapping(mapping) for mapping in raw_mappings
-            )
+            mappings = tuple(self._canonicalize_mapping(mapping) for mapping in raw_mappings)
         except (AffinityDiscoveryError, PluginContractError):
             raise
         except Exception as exc:
@@ -253,8 +237,7 @@ class GenericAffinityProvider:
     ) -> None:
         if len(mappings) != len(contexts):
             raise DeviceMappingError(
-                f"provider returned {len(mappings)} mappings for "
-                f"{len(contexts)} devices",
+                f"provider returned {len(mappings)} mappings for {len(contexts)} devices",
                 code="DEVICE_COUNT_MISMATCH",
             )
         expected_ids = tuple(context.logical_device_id for context in contexts)

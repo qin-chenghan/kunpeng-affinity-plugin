@@ -195,10 +195,7 @@ def resolve_sglang_numa_node(
             f"SGLang GPU id {gpu_id} is outside visible range 0..{count - 1}",
             code="DEVICE_INDEX_INVALID",
         )
-    contexts = tuple(
-        DeviceContext(framework="sglang", logical_device_id=device_id)
-        for device_id in range(count)
-    )
+    contexts = tuple(DeviceContext(framework="sglang", logical_device_id=device_id) for device_id in range(count))
     resolver = GenericAffinityProvider(
         SglangRuntimeProvider(platform, ixsmi=ixsmi),
         sysfs_root=sysfs_root,

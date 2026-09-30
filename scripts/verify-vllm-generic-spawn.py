@@ -80,9 +80,7 @@ def main() -> int:
         "forced-generic",
     )
     if verification_path not in {"forced-generic", "auto-fallback"}:
-        raise RuntimeError(
-            "KUNPENG_AFFINITY_VERIFY_PATH must be forced-generic or auto-fallback"
-        )
+        raise RuntimeError("KUNPENG_AFFINITY_VERIFY_PATH must be forced-generic or auto-fallback")
     os.environ["KUNPENG_AFFINITY_MODE"] = "auto"
     if verification_path == "forced-generic":
         os.environ["KUNPENG_AFFINITY_VLLM_FORCE_GENERIC"] = "1"
@@ -153,16 +151,10 @@ def main() -> int:
 
     expected_nodes = {str(node) for node in nodes}
     actual_memory_nodes = set(result["numactl"].get("membind", "").split())
-    memory_policy_verified = (
-        result["numactl"].get("policy") == "bind"
-        and actual_memory_nodes == expected_nodes
-    )
+    memory_policy_verified = result["numactl"].get("policy") == "bind" and actual_memory_nodes == expected_nodes
     expected_native_calls = 0 if verification_path == "forced-generic" else 1
     if native_query_calls != expected_native_calls:
-        raise RuntimeError(
-            f"native query call mismatch: expected={expected_native_calls} "
-            f"actual={native_query_calls}"
-        )
+        raise RuntimeError(f"native query call mismatch: expected={expected_native_calls} actual={native_query_calls}")
 
     print(
         json.dumps(

@@ -76,11 +76,7 @@ class ProviderRegistry:
                 )
             return provider
 
-        supported = [
-            provider
-            for provider in self._providers.values()
-            if probe(provider).status is ProbeStatus.MATCH
-        ]
+        supported = [provider for provider in self._providers.values() if probe(provider).status is ProbeStatus.MATCH]
         if not supported:
             raise ProviderSelectionError(
                 "no registered provider supports the requested devices",

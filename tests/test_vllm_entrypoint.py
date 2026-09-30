@@ -4,8 +4,8 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from kunpeng_affinity.config import PluginMode
 from kunpeng_affinity import vllm_plugin
+from kunpeng_affinity.config import PluginMode
 
 
 class VllmEntrypointTest(unittest.TestCase):
@@ -25,9 +25,7 @@ class VllmEntrypointTest(unittest.TestCase):
                 "load_plugin_mode",
                 return_value=PluginMode.STRICT,
             ),
-            patch(
-                "kunpeng_affinity.adapters.vllm_adapter.install"
-            ) as install,
+            patch("kunpeng_affinity.adapters.vllm_adapter.install") as install,
         ):
             vllm_plugin.register()
 

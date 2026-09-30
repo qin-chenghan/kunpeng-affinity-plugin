@@ -178,8 +178,6 @@ def load_plugin_config(environ: Mapping[str, str] | None = None) -> PluginConfig
         mode=_mode_value(values["mode"]),
         provider=provider,
         cpu_policy=_enum_value("cpu_policy", values["cpu_policy"], CpuPolicy),
-        diagnostic_level=_enum_value(
-            "diagnostic_level", values["diagnostic_level"], DiagnosticLevel
-        ),
+        diagnostic_level=_enum_value("diagnostic_level", values["diagnostic_level"], DiagnosticLevel),
         config_file=path,
     )
