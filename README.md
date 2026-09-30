@@ -227,6 +227,26 @@ build a wheel, register the vLLM plugin entry point, inspect host hardware, or
 start a GPU workload. Set `PYTHON_BIN` when the desired interpreter is not
 exposed as `python3`.
 
+## Pre-commit checks
+
+The development repository uses the pinned checks in
+`.pre-commit-config.yaml`. They cover `src/`, `tests/`, and reusable scripts;
+experimental probes, validation artifacts, and documentation are excluded
+from this development gate.
+
+```bash
+python3 -m pip install pre-commit
+pre-commit install --install-hooks
+pre-commit run --all-files
+```
+
+For a pull request or merge request checkout that contains the target branch,
+run the incremental check with:
+
+```bash
+TARGET_REF=origin/main ./ci-pre-commit-pr.sh
+```
+
 ## Live host topology probe
 
 Run the separate read-only probe on a target Linux host:

@@ -1,0 +1,36 @@
+minimum_pre_commit_version: 4.0.0
+
+default_stages: [pre-commit]
+
+# The delivery repository contains exploratory probes and validation artifacts.
+# The development gate covers production code, tests, and reusable scripts.
+exclude: ^(demo/|docs/|dist/|validation/)
+
+repos:
+  - repo: https://gitcode.com/gh_mirrors/pr/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
+
+  - repo: https://gitcode.com/gh_mirrors/ru/ruff-pre-commit
+    rev: v0.15.8
+    hooks:
+      - id: ruff-format
+        files: ^(src|tests|scripts)/.*\.py$
+      - id: ruff-check
+        files: ^(src|tests|scripts)/.*\.py$
+        args: [--fix]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        files: ^scripts/.*\.sh$
+        args: [--severity=warning]
