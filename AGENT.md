@@ -1,1002 +1,447 @@
-# Iluvatar Validation Instructions
+# Active Validation Assignments
 
-This file is a temporary test brief for the Agent running in the Iluvatar
-environment. It is not a request to modify the plugin. The final response
-must be a factual validation report with commands, return codes, relevant raw
-errors, and evidence paths.
+This file contains only validation work that is still open. Completed inventory,
+dummy-spawn, TP=1, and Iluvatar fallback tasks have been removed from the active
+brief. Do not repeat them except where this brief explicitly requires a fresh
+baseline for the authoritative TP=4 result.
 
-## Objective
+Return factual reports with commands, return codes, relevant raw evidence, and
+artifact paths. Do not modify plugin or framework source to make a test pass.
 
-Validate the latest checkout in this order:
+## Common Safety Boundary
+
+- Start with a read-only inventory of the host, containers, GPU occupancy,
+  listening ports, and existing model services.
+- Never stop, restart, kill, or reconfigure a process or container that the test
+  Agent did not create for this validation run.
+- Real-service and performance stages may run only in a dedicated validation
+  container on explicitly allocated idle devices. If isolation is unavailable,
+  mark the affected stage `BLOCKED`.
+- Do not install drivers, kernel modules, system packages, or unrelated Python
+  dependencies. Installing the plugin source in the dedicated validation
+  container is allowed.
+- Do not edit plugin source, tests, validation scripts, package metadata, vLLM,
+  SGLang, or model files. Do not commit or push.
+- If the checkout is clean and behind its configured remote branch, update it
+  only with `git pull --ff-only`. If it is dirty, do not pull; record the state
+  and stop before running a result that could be attributed to the wrong code.
+- Keep result artifacts outside the Git checkout. Preserve commands, return
+  codes, stdout/stderr logs, process IDs, and machine-readable raw results.
+- Redact credentials and sensitive command arguments. Model identity and the
+  fact that it is locally available must remain visible in the report; a
+  sensitive absolute model path may be redacted.
+- Report every stage as `PASS`, `FAIL`, `BLOCKED`, or `SKIP`. A missing log is
+  not a pass, and a blocked stage must not be summarized as successful.
+
+## Task 1: Authoritative 184 vLLM Self-Validation
+
+### Objective and Authority
+
+Use the model already available locally on 184:
 
 ```text
-source baseline
-  -> Linux PCIe/NUMA topology
-  -> Iluvatar Runtime Provider
-  -> logical-device visibility reorder
-  -> vLLM entry-point installation
-  -> vLLM Hook installation
-  -> forced-generic dummy spawn
-  -> native-to-generic fallback dummy spawn
+model: Qwen3-32B
+tensor parallel size: 4
+framework: vLLM
+accelerator: Iluvatar
 ```
 
-The first four stages validate the Provider and topology core. The last four
-stages validate framework integration. Do not merge these conclusions:
-Provider success is not plugin binding success.
+This is the authoritative acceptance scenario for the vLLM side of the
+plugin. It is not an additional scenario with the same status as the previous
+Qwen3-8B TP=1 run. The new report must use Qwen3-32B TP=4 as the basis of its
+main conclusions. The TP=1 report may be cited only as historical supporting
+evidence and must not be used to fill missing TP=4 evidence.
 
-## Safety and scope
+The environment exposes four runtime logical devices backed by two physical
+Iluvatar cards. Do not call them four physical cards. Confirm the relationship
+from current runtime evidence before testing; do not copy the old inventory
+without rechecking it.
 
-- Do not edit, reformat, or generate files inside the Git checkout.
-- Do not commit or push.
-- Do not start a model server.
-- Do not stop, restart, or reconfigure any existing container or GPU job.
-- Before any environment-changing stage, confirm that the selected container
-  is a dedicated test container and that no GPU workload is running.
-- Do not install drivers, kernel modules, system packages, or Python
-  dependencies.
-- An editable source install is permitted only in the dedicated test container
-  after recording the current Python environment.
-- Do not modify plugin source or package metadata to bypass a version check.
-- Do not rename or delete existing files, logs, caches, or temporary utilities.
-- If a command needs a temporary `ixsmi` wrapper or library path, record the
-  exact source and destination. Treat that as a validation prerequisite, not
-  as proof that a clean image contains the utility.
-- Preserve all failed command output in the result directory.
+Use the existing TP=1 validation procedure and request methodology where it is
+still applicable, changing the model to local Qwen3-32B and the tensor parallel
+size to 4. Do not silently redesign the workload. If a TP=1 parameter cannot be
+reused with Qwen3-32B TP=4, document the exact incompatibility and the minimal
+change made.
 
-## 1. Repository and environment
-
-The checkout is expected at:
+The plugin checkout is expected at:
 
 ```text
 /home/qch/tools/kunpeng-affinity-plugin
 ```
 
-Run in the container that has vLLM, `ixsmi`, `/sys`, and `numactl`. First
-record, without changing anything:
+Test the current remote commit containing the SGLang Ascend integration
+(`de5bd6a`) or a later commit explicitly identified in the report. Do not test
+an older checkout and describe it as current.
+
+### Result Directory
+
+Create one unique result directory outside the checkout, for example:
+
+```text
+/home/qch/tools/kunpeng-affinity-results/qwen3-32b-tp4-authority-<timestamp>/
+```
+
+Use this structure when the corresponding stage runs:
+
+```text
+report.md
+environment.txt
+commands.txt
+source-tests/
+topology-provider/
+hook-dummy/
+service-native-control/
+service-plugin-forced-generic/
+process-correlation/
+correctness/
+performance/
+```
+
+The final response must include the absolute result directory and the path to
+`report.md`.
+
+### Stage A: Environment, Model, and Isolation Preflight
+
+Before changing the environment, record:
+
+- exact plugin commit, branch, remote relationship, worktree status, and source
+  import location;
+- host kernel, architecture, CPU topology, NUMA nodes, online CPUs, process
+  affinity, and cgroup CPU/memory restrictions;
+- validation container name and image, Python version, complete vLLM version,
+  Iluvatar runtime/driver version, `ixsmi`, and `numactl` paths;
+- current containers, model services, listening ports, GPU processes, and GPU
+  memory occupancy;
+- the local Qwen3-32B model identity and enough model metadata to prove that the
+  intended model was used, without copying or modifying model files;
+- four logical device identities, UUIDs, physical board association, PCI BDFs,
+  and whether all required devices are idle and isolated;
+- the exact visible-device order selected for TP=4.
+
+Proceed to a real service only when all four selected logical devices and the
+container are dedicated to this run. Do not terminate an existing process to
+create an idle baseline. If the allocation is not safe, finish the read-only
+inventory and mark service stages `BLOCKED`.
+
+### Stage B: Fresh Source and Controlled Baseline
+
+Run the current repository tests and record the measured count rather than
+copying a previous result:
 
 ```bash
 cd /home/qch/tools/kunpeng-affinity-plugin
-git status --short --branch
-git log -3 --oneline --decorate
-uname -a
-command -v python3
-python3 -c 'import sys; print(sys.executable); print(sys.version)'
-python3 -c 'import importlib.metadata as m; print(m.version("vllm")); print(m.distribution("vllm").locate_file(""))'
-command -v ixsmi || true
-command -v numactl || true
-ixsmi -L || true
+PYTHON_BIN=python3 ./scripts/test.sh
 ```
 
-If the checkout is behind the requested branch and the worktree is clean, use
-`git pull --ff-only`. If it is dirty, do not pull and report the state. The
-report must include the exact commit tested.
+Run the existing Iluvatar validation suite in the dedicated idle container
+using a fresh result subdirectory. Preserve evidence for:
 
-Record current GPU occupancy. Do not infer idleness from the absence of a
-Python process alone; inspect the vendor tool output and the container list.
+- source installation and both framework entry-point metadata records;
+- Provider single-device, all-device, and visibility-reorder checks;
+- explicit BDF to PCIe path, NUMA node, and target CPU intersection for every
+  visible logical device;
+- forced-generic dummy spawn with zero native NUMA-query calls;
+- controlled native-empty to generic fallback with one native query;
+- child CPU affinity and NUMA memory-policy verification.
 
-For the manual commands below, resolve the actual tools in the selected
-container instead of assuming a shell variable from `config.env` is exported:
+These checks are prerequisites and regression evidence. They do not replace the
+Qwen3-32B TP=4 real-service result.
 
-```bash
-PYTHON_BIN="$(command -v python3)"
-IXSMI_BIN="$(command -v ixsmi)"
-```
-
-The version string is important. Record both the complete version and its
-base version. A value such as `0.23.0+vendor.suffix` is not the same string as
-`0.23.0`, but it may represent the same upstream base version. Do not change
-the code to decide this; report whether the current plugin accepts or rejects
-the complete value and quote the exact log.
-
-## 2. Configure the validation suite
-
-Use the committed template and a Git-ignored local configuration:
+Configure and run the existing suite through its documented local file:
 
 ```bash
 cd /home/qch/tools/kunpeng-affinity-plugin
 cp validation/iluvatar/config.env.example validation/iluvatar/config.env
 ```
 
-Set the following values in the local file:
-
-```text
-ENABLE_ENVIRONMENT_CHANGES=1
-RESULT_DIR=/home/qch/tools/kunpeng-affinity-results/<unique-run-name>
-PYTHON_BIN=python3
-IXSMI_BIN=ixsmi
-VISIBILITY_ENV=CUDA_VISIBLE_DEVICES
-KUNPENG_AFFINITY_PROVIDER=iluvatar-runtime-pci
-AFFINITY_BDFS=0000:45:00.0,0000:48:00.0,0000:af:00.0,0000:b2:00.0
-```
-
-Use a unique result directory for this run. The runner prints the normalized
-absolute result directory before starting and again in the final summary. Do
-not use a result directory inside the Git checkout.
-
-First inspect the selected stages without executing them:
+Set `ENABLE_ENVIRONMENT_CHANGES=1`, a unique absolute `RESULT_DIR`, the actual
+Python and `ixsmi` commands, `VISIBILITY_ENV=CUDA_VISIBLE_DEVICES`, and
+`KUNPENG_AFFINITY_PROVIDER=iluvatar-runtime-pci`. Populate `AFFINITY_BDFS` from
+the current `ixsmi` inventory after normalizing domains for Linux sysfs; do not
+copy old BDFs without verifying them. This Git-ignored local configuration is
+allowed, but tracked files must remain unchanged. Then run:
 
 ```bash
 ./validation/iluvatar/run.sh --dry-run
-```
-
-## 3. Run the one-command suite once
-
-Run the suite exactly as configured:
-
-```bash
 ./validation/iluvatar/run.sh
 ```
 
-Record the first failing stage and its log. Do not reinterpret a failure as a
-later-stage result. In particular, on a heterogeneous host the automatic
-`probe-host.sh` candidate scan may include display or network PCI functions.
-That is a candidate-discovery limitation, not automatically a Provider
-failure. Continue with the explicit-BDF procedure below so the target GPU
-topology is still tested.
+Record the first failing stage and its individual log. Do not reinterpret a
+later skipped stage as passed.
 
-## 4. Explicit target-BDF topology check
+### Stage C: TP=4 Device and Process Contract
 
-Obtain the Iluvatar device inventory without guessing its order:
-
-```bash
-ixsmi --query-gpu=index,uuid,pci.bus_id --format=csv,noheader,nounits
-```
-
-Normalize each reported PCI domain to the Linux sysfs form if necessary, for
-example `00000000:45:00.0` to `0000:45:00.0`. Verify each BDF exists below
-`/sys/bus/pci/devices/`, then run the topology probe with only the Iluvatar
-BDFs:
-
-```bash
-AFFINITY_BDFS=<comma-separated-iluvatar-bdfs> \
-  ./scripts/probe-host.sh
-```
-
-For every target GPU, preserve the output showing:
-
-- canonical BDF;
-- complete PCIe parent path;
-- any PCIe Switch ancestors;
-- NUMA evidence and resolved node;
-- online CPU set;
-- current process allowed CPU set;
-- target CPU intersection;
-- `status` and `bindable`.
-
-The automatic candidate scan and this explicit target-BDF run must be reported
-separately. Do not call the automatic scan failure a target-GPU topology
-failure when the explicit run succeeds.
-
-The current validation accepts vLLM `0.23.0`, `0.25.1`, and `0.26.0`, plus
-vendor-local builds whose PEP 440 version is based on one of these versions,
-such as `0.25.1+ascend.8.0`. An upstream post-release or development version
-is still outside the validated contract. If a local build based on one of
-these three versions is rejected, report it as a regression in the version
-gate rather than changing the source to bypass the check.
-
-## 5. Provider and visibility checks
-
-Run these commands if the one-command suite stopped before them, or use the
-stage logs when it reached them:
-
-```bash
-cd /home/qch/tools/kunpeng-affinity-plugin
-PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" \
-  "$PYTHON_BIN" demo/iluvatar_provider_probe.py \
-  --ixsmi "$IXSMI_BIN" --sysfs-root /sys --device 0
-
-PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" \
-  "$PYTHON_BIN" demo/iluvatar_provider_probe.py \
-  --ixsmi "$IXSMI_BIN" --sysfs-root /sys --json
-```
-
-The all-device result must be checked as a batch:
-
-- every visible logical device has a runtime UUID;
-- UUIDs are unique;
-- BDFs are unique;
-- UUID-to-BDF association is complete;
-- every topology result is bindable;
-- no partial result is treated as successful.
-
-If at least two devices are visible, the one-command suite should run the
-reorder check. The runner uses a marker-based numeric capture so vLLM startup
-logs on stdout cannot make a four-device result look like fewer than two. The
-manual equivalent is:
-
-```bash
-CUDA_VISIBLE_DEVICES=1,0 \
-  PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" \
-  "$PYTHON_BIN" demo/iluvatar_provider_probe.py \
-  --ixsmi "$IXSMI_BIN" --sysfs-root /sys --json
-```
-
-Compare the default and reordered JSON. The logical ID may change, but the
-UUID and its BDF must remain associated. Do not assume
-`ILUVATAR_VISIBLE_DEVICES` works unless the runtime demonstrates it.
-
-## 6. Entry point and controlled plugin checks
-
-Only run installation and spawn checks after confirming the dedicated test
-container is idle. The suite performs:
-
-```bash
-PYTHON_BIN="$PYTHON_BIN" ./scripts/install-source.sh
-PYTHON_BIN="$PYTHON_BIN" ./scripts/verify-source.sh
-```
-
-`verify-source.sh` proves installed metadata and source import location. It
-does not by itself prove that vLLM installed the Hook. The Hook check is in the
-spawn diagnostic:
-
-```bash
-CUDA_VISIBLE_DEVICES=0 \
-KUNPENG_AFFINITY_PROVIDER=iluvatar-runtime-pci \
-KUNPENG_AFFINITY_VLLM_FORCE_GENERIC=1 \
-PYTHON_BIN="$PYTHON_BIN" \
-./scripts/verify-vllm-generic-spawn.sh
-```
-
-The forced-generic run is successful only if all of these are true:
-
-- vLLM's plugin loader finds the entry point;
-- the Hook marker is installed;
-- native GPU NUMA discovery is not called;
-- the Iluvatar Provider maps the visible device to a BDF;
-- a NUMA node is committed to the vLLM config;
-- the original vLLM subprocess context is entered;
-- the dummy child starts and exits;
-- child `Cpus_allowed_list` equals the expected NUMA CPU intersection;
-- `numactl --show` reports the expected bind policy and memory node;
-- no diagnostic child process remains.
-
-Then run the controlled native-to-generic fallback check:
-
-```bash
-CUDA_VISIBLE_DEVICES=0 \
-KUNPENG_AFFINITY_PROVIDER=iluvatar-runtime-pci \
-KUNPENG_AFFINITY_VERIFY_PATH=auto-fallback \
-PYTHON_BIN="$PYTHON_BIN" \
-./scripts/verify-vllm-generic-spawn.sh
-```
-
-The expected fallback evidence is one controlled native-query call followed
-by a generic result and the same child CPU/memory checks.
-
-If a version outside the validated base versions is rejected before installing
-the Hook, classify both spawn stages as `BLOCKED` at version gate. Do not call
-this a Provider or topology failure, and do not bypass the gate by editing
-source or package metadata. Preserve the exact error. A
-vendor-local builds based on `0.23.0`, `0.25.1`, or `0.26.0` are expected to
-pass this gate; rejection is a regression.
-
-## 7. Report format
-
-Return one report with these sections:
-
-1. Environment and exact commit.
-2. Configuration source and normalized result directory.
-3. One-command suite summary, including the first stopping stage.
-4. Explicit-BDF topology results and raw PCIe paths.
-5. Provider device table for default and reordered visibility.
-6. Entry-point result versus actual Hook-install result.
-7. Forced-generic and auto-fallback spawn results.
-8. Failures, blockers, and whether each is code, environment, or test-script behavior.
-9. Confirmed capabilities.
-10. Capabilities that remain unverified.
-
-For every stage include command, return code, result (`PASS`, `FAIL`,
-`BLOCKED`, or `SKIP`), and log path. Do not summarize a skipped or blocked
-stage as passed.
-
-The strongest possible conclusion from this procedure is one of:
-
-- Provider/topology validation failed;
-- Provider/topology passed, but vLLM Hook or binding validation is blocked;
-- Provider and controlled vLLM dummy-spawn binding both passed, so real single-GPU
-  service validation may begin.
-
-Do not claim production support, real model-service support, TP/DP support, or
-SGLang lifecycle support from this test alone.
-
-## 8. Next task: inventory existing real-workload tests
-
-Before starting any real model-service or performance run, inspect the current
-184 environment and report which test assets already exist. This task is
-read-only. It is an inventory task, not a request to start a server or run a
-benchmark.
-
-### Safety boundary
-
-- Do not edit, reformat, or generate files inside the Git checkout.
-- Do not start, stop, restart, or reconfigure any model server, container, GPU
-  workload, or background process.
-- Do not kill processes, even if they appear idle or unrelated.
-- Do not install packages, drivers, Python dependencies, or benchmark tools.
-- Do not run a performance benchmark or send inference requests.
-- Do not print passwords, tokens, SSH details, IP addresses, or complete
-  command lines containing credentials.
-- Redact model paths, user data, and other sensitive values when they are not
-  needed to identify a reusable test asset.
-- Preserve the current checkout and report its exact commit and worktree state.
-
-### Read-only inventory
-
-Inspect, using commands appropriate for the environment:
-
-1. Existing vLLM/SGLang test scripts, benchmark scripts, launch scripts,
-   prompt files, request datasets, and result files under the user's working
-   directories and the selected test container.
-2. Existing model-serving commands and parameters, including model identity,
-   TP/DP size, visible devices, concurrency, input/output length controls,
-   quantization, and any CPU or NUMA constraints. Report sensitive paths in a
-   redacted form.
-3. Available benchmark tools and their versions, such as vLLM benchmark
-   commands, `genai-perf`, `lm-evaluation-harness`, or local project tools.
-   Check availability and versions only; do not execute a workload.
-4. Existing baseline results and their measurement fields. Identify whether
-   they contain TTFT, TPOT/ITL, end-to-end latency, throughput, GPU
-   utilization, CPU utilization, or NUMA/memory-policy observations.
-5. Current container/image information needed to reproduce a test, without
-   changing container state. Include framework version, Python version,
-   accelerator runtime version, and whether a test container is available.
-6. Whether there is an approved idle window and isolated GPU allocation for a
-   future TP=1 service test. Do not create or reserve one during this task.
-
-Use read-only commands such as `find`, `grep`, `sed`, `command -v`, version
-queries, `docker ps`, and `docker inspect` where available. On systems without
-`rg`, use `grep` and `find`. Do not infer that a test is reusable merely from
-its filename; inspect its parameters and result format.
-
-### Classification required in the report
-
-Classify every discovered asset into one of these categories:
-
-- `FUNCTIONAL`: suitable for checking that a real service starts and answers a
-  request;
-- `EXECUTION-CHAIN`: suitable for checking real Worker/EngineCore Hook,
-  rank-to-device mapping, CPU affinity, and NUMA memory policy;
-- `PERFORMANCE-BASELINE`: suitable for comparing plugin-off and plugin-on
-  behavior under the same workload;
-- `REUSABLE-WITH-CHANGES`: useful but missing a parameter, metric, isolation
-  condition, or reproducibility detail;
-- `NOT-REUSABLE`: unrelated, incomplete, or unsafe for this validation.
-
-Keep the three conclusions separate:
+Before launching the model, derive and save the expected ordered mapping:
 
 ```text
-existing business workload
-  -> candidate for performance comparison
-
-plugin-owned validation script
-  -> required for execution-chain correctness
-
-real service request
-  -> required before claiming model-serving support
+visible logical id
+  -> runtime UUID
+  -> runtime physical index
+  -> physical board
+  -> PCI BDF
+  -> PCIe parent path
+  -> NUMA node
+  -> expected CPU intersection
 ```
 
-### Required report format
+Validate the full four-device batch. A missing identity, duplicate UUID/BDF,
+unknown NUMA node, empty CPU intersection, or changed visibility fingerprint
+invalidates the batch. Never accept a successful subset.
 
-Return a factual report with:
+Do not assume the old node layout. If the current inventory still maps logical
+devices 0/1 to one NUMA node and 2/3 to another, state that as newly observed
+evidence. Also preserve evidence showing that logical devices 0/1 and 2/3 are
+two logical devices per physical board.
 
-1. Environment and exact plugin commit inspected.
-2. Existing test assets, with redacted paths, commands, framework versions,
-   and classification.
-3. Existing baseline result files and the metrics they contain.
-4. TP=1 and TP=4 coverage, if present; explicitly state what is absent.
-5. Candidate assets for future functional, execution-chain, and performance
-   validation.
-6. Missing information or blockers.
-7. A minimal recommended next test matrix, without running it.
-8. Commands used and return codes for all meaningful checks.
+### Stage D: Real Qwen3-32B TP=4 Service Pair
 
-The report must explicitly answer:
-
-- Can an existing 184 workload be reused for performance comparison?
-- Is there an existing real-service functional test?
-- Is there an existing test that externally verifies Worker CPU affinity and
-  NUMA memory policy?
-- Which tests must be supplied by this plugin repository?
-- What must be fixed or controlled before a TP=1 run?
-
-## 9. Requested regression after the latest plugin update
-
-Run this regression after updating to the commit that contains the Ascend
-short-BDF parser fix and the vLLM `0.25.1` support entry.
-
-### Required safety boundary
-
-- Do not edit plugin source, tests, configuration templates, or package
-  metadata to make a stage pass.
-- Do not start, stop, restart, or reconfigure an existing model service.
-- Do not run the full environment-changing suite while a GPU workload shares
-  the selected container. In that case run `./validation/iluvatar/run.sh
-  --read-only` and report the dummy-spawn stages as `BLOCKED` or `SKIP`.
-- Only run editable installation and dummy-spawn stages after confirming the
-  container is dedicated and all target GPUs are idle.
-
-### Regression steps
-
-1. Record the exact commit, worktree state, Python version, complete vLLM
-   version, base version, `ixsmi` path, and GPU occupancy.
-2. Run the source tests with the environment's Python 3.10+ interpreter:
-
-   ```bash
-   PYTHON_BIN=python3 ./scripts/test.sh
-   ```
-
-   If `python3` is not 3.10+, resolve the available interpreter and report the
-   exact replacement command. Do not install Python.
-3. Run the Iluvatar Provider single-device, all-device, and visibility-reorder
-   probes. Confirm UUID-to-BDF association remains stable under reordered
-   visibility and that every result is bindable.
-4. If the actual environment contains vLLM `0.25.1` or a vendor-local build
-   based on it, run the source-install, entry-point, forced-generic
-   dummy-spawn, and automatic-fallback dummy-spawn stages in the dedicated
-   idle container. Confirm the Hook is installed, the generic path commits the
-   expected NUMA node, the child CPU set matches the expected CPUs, and the
-   memory policy is correct.
-5. If the actual environment does not contain vLLM `0.25.1`, do not fabricate
-   a version or modify the version gate. Run the available supported-version
-   validation and explicitly report that `0.25.1` runtime integration remains
-   unverified.
-
-### Required regression report
-
-Return command, return code, result status, and log path for every stage. The
-report must separately state:
-
-- whether the three new parser tests pass;
-- whether the actual vLLM version is one of the supported bases;
-- whether `0.25.1` was tested in a real vLLM environment or only by source
-  contract tests;
-- whether any existing GPU service was observed and left untouched;
-- whether the result proves only Provider/topology behavior or also proves
-  controlled vLLM Hook and child-binding behavior.
-
-## 10. Completed Iluvatar auto-fallback regression
-
-The focused Iluvatar auto-fallback regression has been re-run after the fix
-following `7e7498a` and is now **PASS** in the dedicated vLLM `0.23.0+corex`
-environment. Do not report this stage as pending or repeat it unless a later
-change touches the vLLM decision path.
-
-The defect was that an empty native `get_auto_numa_nodes()` result was
-preserved when the platform exposed a BDF API, even though vLLM's original
-subprocess context then failed to resolve a NUMA node. The fixed behavior is:
+Run two isolated services sequentially, never concurrently:
 
 ```text
-valid native node list -> preserve the native vLLM path
-empty native result    -> run the generic Provider and Linux topology path
-native query exception -> propagate the original error
+run A: native control
+  - plugin mode off
+  - vLLM --numa-bind enabled
+  - vLLM native NUMA behavior retained
+
+run B: authoritative plugin path
+  - plugin mode strict
+  - KUNPENG_AFFINITY_PROVIDER=iluvatar-runtime-pci
+  - KUNPENG_AFFINITY_VLLM_FORCE_GENERIC=1
+  - vLLM --numa-bind enabled
 ```
 
-The accepted evidence includes:
+Both runs must use the same:
 
-- the complete validation suite passing;
-- `native_numa_query_calls=1`;
-- `generic_fallback_verified=true`;
-- generic NUMA node selection;
-- expected and observed child CPU sets;
-- memory-policy verification;
-- forced-generic still passing;
-- no model service started and no unrelated GPU process changed.
+- local Qwen3-32B model and tokenizer;
+- container image and vLLM configuration;
+- four logical devices in the same visible order;
+- `tensor-parallel-size=4` and unchanged DP size;
+- scheduler, memory, quantization, dtype, context-length, and eager/graph
+  settings;
+- request corpus, seed, concurrency, input/output limits, and warmup policy;
+- service-side CPU restrictions other than the binding behavior under test.
 
-## 11. Remaining validation matrix
+Record every difference between the two launch commands. The intended
+differences are only the plugin control variables required to select run A or
+run B. If another difference is unavoidable, explain why before interpreting
+performance.
 
-The following items remain open. A test report must distinguish real runtime
-evidence from source-level contract tests and must not infer one framework's
-result from another framework.
+For each run, preserve:
 
-### Required vLLM validation
+- complete redacted launch command, environment delta, startup log, readiness
+  check, shutdown log, and return code;
+- one fixed deterministic request and response proving service availability;
+- plugin discovery, Hook installation, decision, Provider, topology, commit,
+  and vLLM binding logs where applicable;
+- process tree with PID, parent PID, process kind, local rank, and DP local rank;
+- clean shutdown of only the service created by this run and proof that no test
+  process remains.
 
-1. **vLLM 0.25.1 real Hook integration**
-
-   Ascend 0.25.1 Provider mapping has passed, but the complete plugin path has
-   not been proven in an isolated environment:
-
-   ```text
-   entry point
-     -> configure_subprocess Hook
-     -> Ascend Provider
-     -> generic NUMA fallback
-     -> original numactl wrapper
-     -> dummy Worker CPU and memory policy
-   ```
-
-   Use a dedicated container or isolated GPUs. Do not inject the plugin into a
-   shared TP=8 production container.
-
-2. **Real single-GPU vLLM service**
-
-   Start an isolated TP=1 service with the plugin disabled and enabled. Send a
-   real request in both cases, then collect:
-
-   - service startup result;
-   - request result;
-   - Worker CPU affinity;
-   - NUMA memory policy;
-   - plugin decision logs.
-
-   Dummy spawn success alone does not prove model-service support.
-
-3. **vLLM multi-process and parallel execution**
-
-   In an isolated environment, cover at least one multi-GPU TP case and the
-   relevant EngineCore/Worker path. If DP is in scope, also cover a DP shard.
-   Verify:
-
-   - each logical device maps to the intended BDF;
-   - each Worker receives the correct NUMA node and CPU set;
-   - EngineCore receives the intended CPU superset;
-   - visibility fingerprints survive process creation and revalidation;
-   - a partial or changed mapping does not commit a partial result.
-
-### Required SGLang validation
-
-4. **SGLang 0.5.18 real single-GPU service**
-
-   Source-level SGLang tests pass, but no real SGLang service lifecycle has
-   been accepted yet. Validate plugin discovery, the NUMA query Hook, native
-   empty-result fallback, original process launch, Worker CPU affinity, memory
-   policy, and one real request.
-
-5. **SGLang multi-GPU and launcher coverage**
-
-   After TP=1 passes, validate the SGLang multi-GPU/TP path and DP path if they
-   are in scope. Validate Controller/Worker and Ray or external-launcher paths
-   separately; do not infer their support from the ordinary Engine path.
-
-6. **Ascend Provider coverage in SGLang**
-
-   The Ascend Provider is currently wired into the vLLM assembly path. The
-   SGLang Provider selection path currently covers `auto`,
-   `sglang-runtime-pci`, and `iluvatar-runtime-pci`; `ascend-sysfs-pci` has not
-   been wired into SGLang. Decide whether Ascend+SGLang is part of the first
-   delivery. If yes, implement and validate that adapter path before claiming
-   Ascend support for SGLang.
-
-### Optional validation and delivery closure
-
-7. **Performance baseline**
-
-   If the delivery must claim a performance benefit, compare plugin-off and
-   plugin-on under the same model, prompts, concurrency, visible devices, and
-   CPU constraints. Record TTFT, token latency, end-to-end latency, throughput,
-   CPU/GPU utilization, and NUMA policy. Functional tests do not establish a
-   performance improvement.
-
-8. **Real PCIe Switch hardware**
-
-   Fixture tests already cover direct, single-level, and multi-level paths. If
-   the acceptance target requires physical Switch hardware, preserve one real
-   host report containing the complete PCIe parent path, Switch ancestors,
-   NUMA evidence, and target CPU set.
-
-9. **Documentation synchronization**
-
-   Before release, update the formal delivery design with the current commit,
-   test count, supported vLLM baselines, Ascend Provider status, and the now
-   passing Iluvatar auto-fallback result. Do not leave old status tables or old
-   commit references as the delivery state.
-
-### Required status wording
-
-Every future report must state separately:
-
-- what is proven by source tests;
-- what is proven by Provider/topology probes;
-- what is proven by controlled framework dummy spawn;
-- what is proven by a real model service;
-- what remains unverified;
-- whether any existing GPU workload was observed and left untouched.
-
-## 12. Complete 184 self-validation task for acceptance evidence
-
-This section is the current end-to-end task brief. Validate the checkout at
-commit `f4591ea` or a later commit explicitly identified in the report. The
-goal is to produce an acceptance-oriented self-validation report, not merely a
-unit-test transcript. The report must separate source-level evidence,
-controlled framework evidence, real-service evidence, correctness evidence,
-and performance evidence.
-
-For this section only, the earlier inventory-only restrictions are superseded
-after Stage A preflight: an isolated validation service may be started and
-stopped by the test Agent, but only on newly allocated idle resources. The
-earlier prohibition on touching existing services, shared containers, or busy
-GPUs remains absolute.
-
-### 12.1 Safety and authority boundary
-
-- Work only in the user's plugin checkout and a dedicated validation result
-  directory outside that checkout.
-- Do not modify plugin source, tests, validation scripts, package metadata, or
-  framework source to make a stage pass. Do not commit or push.
-- Start no test until current containers, processes, GPU occupancy, ports, and
-  existing model services have been inventoried.
-- Never stop, restart, kill, or reconfigure an existing service or process.
-- Real-service and performance stages may run only on GPUs confirmed idle and
-  isolated from existing workloads. If isolation is unavailable, mark the
-  stage `BLOCKED`; do not borrow a busy GPU.
-- Installing the plugin source in a dedicated validation container is allowed.
-  Do not install drivers, kernel modules, system packages, or unrelated Python
-  dependencies. Record any pre-existing image/container and tool versions.
-- Do not expose passwords, tokens, private paths, IP addresses, user prompts,
-  model credentials, or complete credential-bearing commands in the report.
-- Preserve every command, return code, stdout/stderr log, process PID, and
-  artifact path needed to reproduce the result.
-
-### 12.2 Report directory and status vocabulary
-
-Create a unique result directory outside the Git checkout, for example:
+Run B is a plugin execution-chain `PASS` only when its logs prove:
 
 ```text
-/home/qch/kunpeng-affinity-results/self-validation-<timestamp>/
+vLLM discovers plugin
+  -> configure_subprocess Hook is installed
+  -> native NUMA query is bypassed
+  -> Iluvatar Provider maps all four logical devices to UUID/BDF
+  -> Linux topology resolves the complete ordered NUMA list
+  -> plugin commits the list atomically
+  -> original vLLM numactl path launches the TP=4 processes
 ```
 
-Use this layout where the corresponding stage is executed:
+A healthy service or a generic vLLM binding message without this chain is not
+sufficient plugin evidence.
+
+### Stage E: Per-Process Binding Verification
+
+For both runs, correlate every relevant process in one table:
 
 ```text
-report.md
-environment.txt
-workload-inventory.txt
-commands.txt
-source-tests/
-topology-provider/
-hook-dummy/
-vllm-service-off/
-vllm-service-on/
-correctness/
-performance/
-sglang/
-```
-
-Every stage must be reported as exactly one of `PASS`, `FAIL`, `BLOCKED`, or
-`SKIP`, with the command, return code, reason, and evidence path. `BLOCKED`
-means the stage was required but could not be safely or technically run;
-`SKIP` means it is outside the available acceptance scope and the reason is
-explicit. A missing log is not a pass.
-
-### 12.3 Stage A: environment and workload preflight
-
-Record read-only facts before any installation or service launch:
-
-- exact plugin commit, branch, worktree state, and source location;
-- host kernel, architecture, CPU topology, NUMA nodes, online CPUs, and
-  current process cpuset/affinity;
-- container name/image, Python version, vLLM/SGLang versions, accelerator
-  runtime and driver versions;
-- `ixsmi` GPU inventory, UUID, PCI BDF, visible-device environment, and GPU
-  occupancy/processes;
-- listening ports and existing model services;
-- available `numactl`, `taskset`, `nsys`/`perf`/vendor monitoring tools, and
-  their versions, without starting a benchmark;
-- whether an isolated idle GPU and a dedicated container are available for
-  TP=1 and multi-GPU tests.
-
-Classify existing workloads before reuse:
-
-```text
-FUNCTIONAL
-EXECUTION-CHAIN
-PERFORMANCE-BASELINE
-REUSABLE-WITH-CHANGES
-NOT-REUSABLE
-```
-
-Do not start a service or send an inference request in this stage.
-
-### 12.4 Stage B: source and static baseline
-
-Run the repository's source test entry point with the environment's Python:
-
-```bash
-PYTHON_BIN=python3 ./scripts/test.sh
-```
-
-Also run source compilation and whitespace checks. If `coverage.py` is already
-available, collect statement and branch coverage without adding a dependency.
-Otherwise use the standard-library `trace` command or report that branch
-coverage is unavailable. Record the test count, coverage method, and coverage
-by vLLM adapter module. The current local reference is 159 passing tests, but
-the result on 184 must be measured rather than copied.
-
-### 12.5 Stage C: topology and Provider evidence
-
-Run the read-only generic topology probe and the Iluvatar Provider probes. Use
-explicit target GPU BDFs when automatic candidate discovery sees unrelated PCI
-functions. Record for every visible GPU:
-
-```text
-logical device -> runtime identity -> physical identity -> canonical BDF
-  -> complete PCIe parent path -> Switch ancestors -> NUMA node
-  -> online CPUs ∩ allowed CPUs -> target CPUs -> bindable status
-```
-
-Verify both default visibility and a safe reordered visibility case. The
-reordered case must preserve UUID-to-BDF association and must not use vendor
-tool row order as the logical mapping. A partial mapping, duplicate identity,
-unknown NUMA node, or empty CPU intersection must be reported as a failed
-batch, never as a successful partial result.
-
-### 12.6 Stage D: controlled vLLM Hook and binding chain
-
-Run the complete Iluvatar validation suite for the current commit in a
-dedicated idle container. At minimum collect:
-
-1. source tests and source installation;
-2. entry-point metadata and source import location;
-3. forced-generic dummy spawn;
-4. native-empty automatic fallback dummy spawn;
-5. expected child CPU affinity and `numactl --show` memory policy;
-6. Hook logs proving the entry point ran in the relevant process;
-7. child start/exit and absence of residue after completion.
-
-The forced-generic path must prove zero native NUMA query calls. The fallback
-path must prove a native empty result, exactly one controlled fallback, and the
-same child CPU/memory-policy evidence. Report the full chain rather than only
-the runner return code.
-
-### 12.7 Stage E: real vLLM TP=1 functional validation
-
-Only if Stage A confirms an isolated idle GPU and a reproducible model image,
-run the same TP=1 service twice:
-
-```text
-run A: plugin disabled
-run B: plugin enabled, automatic generic path observable
-```
-
-Keep model, image, visible device, request parameters, seeds, tokenizer,
-maximum output tokens, and service settings identical. Do not alter any
-existing service. Collect:
-
-- startup and readiness result;
-- one fixed deterministic request and HTTP response;
-- EngineCore/Worker PIDs and process kinds;
-- plugin discovery and decision logs;
-- each relevant PID's `Cpus_allowed_list`;
-- `numactl --show`, `Mems_allowed_list`, and memory-policy evidence;
-- selected Provider, BDF, NUMA node, and expected/observed CPU set;
-- clean service shutdown and no leftover test processes.
-
-The plugin-disabled run is a control only. It does not prove that the plugin
-was loaded or that binding occurred. A service response alone does not prove
-the execution chain.
-
-### 12.8 Stage F: inference result consistency
-
-Use the exact same fixed request set against the plugin-disabled and
-plugin-enabled TP=1 services. Prefer deterministic generation (`temperature=0`
-or greedy), fixed seed, fixed tokenizer and fixed output limit. Save redacted
-JSONL outputs and a machine-readable comparison.
-
-Compare, at minimum:
-
-- HTTP success and error counts;
-- empty/error/truncated responses;
-- generated token counts;
-- exact output match where the runtime is deterministic;
-- normalized or task-specific match only when nondeterminism is documented.
-
-Do not call this a model-accuracy benchmark unless a defined evaluation set
-and metric are used. For this plugin, it is primarily an inference-result
-regression check proving that NUMA binding does not alter observable output.
-
-### 12.9 Stage G: real vLLM multi-process and parallel validation
-
-If isolated hardware permits, run one multi-GPU TP case after TP=1 passes. If
-the environment and acceptance scope include DP, run one DP case separately.
-Collect and correlate PIDs, local ranks, logical devices, BDFs, NUMA nodes,
-CPU sets, and memory policy. Verify:
-
-- every Worker maps to the intended visible device;
-- EngineCore receives the intended process-level policy;
-- spawn inheritance marker validation succeeds;
-- visibility fingerprints remain valid after process creation;
-- a changed or incomplete mapping prevents partial commit;
-- service startup and one fixed request succeed.
-
-Do not infer TP/DP support from the dummy-spawn test or from TP=1.
-
-### 12.10 Stage H: performance A/B validation
-
-Only run performance tests after functional and consistency stages pass and an
-idle allocation is approved. Use plugin-off and plugin-on under the same
-container, model, visible devices, TP/DP, CPU constraints, request set,
-concurrency, input/output token limits, warmup count, duration, and scheduler
-settings. Prefer an existing reusable workload from Stage A; otherwise report
-that no performance baseline is available instead of inventing a business
-workload.
-
-Record raw per-request data and aggregate at least:
-
-- request success rate;
-- TTFT;
-- TPOT/ITL or inter-token latency;
-- end-to-end latency p50/p95/p99;
-- input/output tokens per second and aggregate throughput;
-- CPU and GPU utilization;
-- worker affinity and NUMA memory policy during the run.
-
-Use the same warmup and sample counts for both arms. Report absolute values,
-relative change, variance or confidence interval where available, and the
-measurement limitations. Do not claim a performance improvement without a
-predefined acceptance threshold; if no threshold exists, report comparison
-data without a PASS/FAIL performance conclusion.
-
-### 12.11 Stage I: SGLang and remaining framework scope
-
-Inspect whether a clean SGLang 0.5.18 environment is available. If it is
-available and isolated, validate a real TP=1 service with plugin off/on,
-including Hook discovery, native-empty fallback, Worker affinity, memory
-policy, one fixed request, and output consistency. Then separately assess
-multi-GPU TP/DP and launcher/Ray paths. If SGLang is unavailable on 184, mark
-the real-service stages `BLOCKED` and record the missing environment; source
-tests must not be presented as real SGLang validation.
-
-Confirm and report that `ascend-sysfs-pci` is not currently wired into the
-SGLang assembly path unless the source has changed. Do not silently broaden
-the claimed hardware/framework support.
-
-### 12.12 Final self-validation report
-
-Write `report.md` with these sections:
-
-1. Scope, acceptance criteria, and exact commit.
-2. Environment, workload inventory, isolation decision, and safety result.
-3. Stage matrix with command, return code, status, and evidence path.
-4. Source test and coverage result.
-5. Provider/topology mapping tables and PCIe paths.
-6. Controlled vLLM Hook and dummy binding evidence.
-7. Real vLLM service evidence and process-to-device correlation.
-8. Inference result consistency comparison.
-9. Performance A/B data and limitations, or a precise blocked reason.
-10. SGLang results and unsupported boundaries.
-11. Failures classified as code, environment, workload, or harness.
-12. Confirmed capabilities, unverified capabilities, and recommended next step.
-
-The conclusion must use separate statements for:
-
-```text
-source tests prove ...
-Provider/topology probes prove ...
-controlled dummy spawn proves ...
-real vLLM service proves ...
-result-consistency test proves ...
-performance comparison shows ...
-SGLang remains ...
-```
-
-Never turn `BLOCKED` into `PASS`, never infer performance from functional
-success, and never claim production or multi-process support without the
-corresponding evidence.
-
-## 13. Follow-up tasks from 184 TP=1 self-validation review
-
-The previous 184 report established a strong TP=1 result, but its real-service
-logs prove vLLM's observed EngineCore binding more directly than they prove the
-plugin's generic Provider path and Worker-level result. Complete the following
-focused follow-up on the same isolated validation resources. Do not repeat
-Provider or dummy-spawn stages unless the tested commit changes those paths.
-
-### 13.1 Real TP=1 forced-generic service
-
-Run an isolated TP=1 service with the same model, image, visible GPU, and
-`--numa-bind` settings as the existing service comparison, plus:
-
-```text
-KUNPENG_AFFINITY_VLLM_FORCE_GENERIC=1
-KUNPENG_AFFINITY_PROVIDER=iluvatar-runtime-pci
-```
-
-The service is a valid forced-generic result only when the evidence contains
-all of the following:
-
-- the vLLM general-plugin entry point was loaded;
-- the vLLM subprocess Hook was installed in the relevant process;
-- the native NUMA query was bypassed or recorded as zero calls;
-- the generic path selected a NUMA node;
-- the Provider/topology evidence identifies the visible GPU's UUID, BDF and
-  NUMA node;
-- the service starts, becomes ready, answers one fixed request, and exits
-  cleanly;
-- EngineCore and Worker process evidence is collected separately when both
-  exist.
-
-Do not treat only `Binding EngineCore subprocess` from vLLM as proof of this
-stage. Preserve the plugin log lines and the per-process evidence in
-`vllm-service-forced-generic/`.
-
-### 13.2 Real TP=1 automatic-fallback service
-
-Run the same isolated TP=1 service without the force-generic override. Keep
-`--numa-bind` enabled and use the same Provider configuration. The expected
-plugin decision is:
-
-```text
-native query returns no usable NUMA result
-  -> plugin records FALLBACK_ALLOWED
-  -> Iluvatar Provider resolves UUID -> BDF
-  -> Linux topology resolves BDF -> NUMA/CPU set
-  -> vLLM native context applies the selected NUMA node
-```
-
-The stage is `PASS` only if the service log proves the native-empty result and
-the subsequent generic selection. A successful response plus a NUMA binding
-log without these decision records is `BLOCKED` for plugin-chain proof, not a
-pass. Store evidence in `vllm-service-auto-fallback/`.
-
-### 13.3 EngineCore and Worker process correlation
-
-For both real-service runs, produce a table that maps:
-
-```text
-PID -> parent PID -> process_kind -> local_rank/dp_local_rank
-    -> logical GPU -> UUID -> BDF -> NUMA node
+PID -> PPID -> process kind -> TP rank -> local rank/dp_local_rank
+    -> logical device -> UUID -> BDF -> physical board -> NUMA node
     -> expected CPUs -> observed Cpus_allowed_list
     -> observed memory policy
 ```
 
-Use read-only process inspection and the plugin/vLLM logs. At minimum preserve
-the equivalent of `/proc/<pid>/status` affinity fields, the process command
-line with sensitive arguments redacted, and the NUMA policy observation. Do
-not label an EngineCore result as a Worker result. If the Worker inherits the
-EngineCore policy, show the parent-child relationship and state that it is
-inherited. If a Worker is not observable, mark Worker-level validation
-`BLOCKED` rather than inferring it.
+Use runtime logs and read-only `/proc`/NUMA inspection while the service is
+alive. Distinguish EngineCore, TP Workers, API processes, and unrelated
+processes. Do not label EngineCore evidence as Worker evidence. If a policy is
+inherited, show the parent-child relationship and identify it as inherited.
 
-### 13.4 Inference result consistency rerun
+The TP=4 binding stage passes only if all four TP ranks are accounted for and
+each observed Worker policy agrees with its mapped BDF/NUMA result. Verify the
+EngineCore policy separately; do not assume it must equal one Worker's CPU set.
+If a Worker disappears before inspection or cannot be mapped unambiguously,
+mark that part `BLOCKED` rather than inferring the result.
 
-The prior report used a similarity score below 1.0 for the first sample and
-therefore cannot claim that all 20 outputs were byte-for-byte identical. Rerun
-the comparison with:
+Check CPU affinity and memory policy independently. `Mems_allowed_list` alone
+does not prove a `numactl` memory-binding policy.
 
-- identical plugin-off and plugin-on request order;
-- an explicit warmup set excluded from comparison;
-- a fixed deterministic generation configuration;
-- exact output comparison for every measured sample;
-- saved redacted JSONL outputs and a machine-readable comparison result.
+### Stage F: Inference-Result Consistency
 
-Report warmup samples separately. If any measured sample differs, preserve the
-diff and report `FAIL` or `BLOCKED` according to whether the difference can be
-attributed and reproduced. Use `result regression`, not `model accuracy`,
-unless a defined evaluation dataset and metric are also used.
+Use the same deterministic request set and ordering for runs A and B. Reuse the
+accepted TP=1 method unless the saved assets are unavailable:
 
-### 13.5 Performance A/B repeatability
+- run an explicit warmup set and exclude it from measured comparison;
+- run at least three measured rounds;
+- use the same number of requests per round on both arms;
+- use deterministic generation, a fixed seed, fixed tokenizer, and fixed output
+  limit;
+- save redacted raw JSONL responses and a machine-readable comparison result.
 
-The existing 20-request result is preliminary because one off-arm warmup
-sample distorted TTFT p95 and there was no repeated-run variance. If an idle
-allocation remains available, repeat plugin-off and plugin-on under identical
-conditions with:
+Compare HTTP status, error/empty/truncated responses, generated token counts,
+and exact response text for every measured pair. If exact determinism is not
+available, prove and document why before using a normalized comparison.
 
-- the same model, image, visible GPU, TP/DP and CPU constraints;
-- the same request set, concurrency and token limits;
-- an explicit warmup phase excluded from measured samples;
-- at least three independent rounds per arm;
-- raw per-request records and per-round aggregates.
+Call this an inference-result consistency or regression test, not a model
+accuracy evaluation. Qwen3-32B results must be compared between run A and run B;
+they must not be compared with old Qwen3-8B outputs.
 
-Report TTFT, TPOT/ITL, end-to-end latency and throughput using p50/p95 and
-round-to-round variation. Explain any outlier rather than silently removing
-it. Without a predefined performance threshold, label the result `comparison
-data`, not `PASS` or `FAIL`, and do not claim a performance improvement.
-If no safe idle allocation remains, mark this follow-up `BLOCKED` and retain
-the existing measurements as preliminary evidence.
+### Stage G: Performance Comparison
 
-### 13.6 Required report correction
+After functional and result-consistency stages pass, run the same performance
+methodology on run A and run B:
 
-Update the self-validation report so its conclusion uses these boundaries:
+- identical warmup count excluded from measurement;
+- at least three independent measured rounds per arm;
+- identical request order, concurrency, input/output lengths, and token limits;
+- raw per-request records plus per-round and aggregate results;
+- affinity and memory-policy evidence sampled during each arm;
+- GPU and CPU utilization when an existing read-only collection tool is
+  available.
 
-```text
-source tests prove the source-level contracts;
-Provider/topology probes prove UUID/BDF/NUMA mapping;
-controlled dummy spawn proves controlled binding;
-real TP=1 service proves only the paths directly evidenced in its logs;
-result consistency proves only the compared samples after warmup;
-performance is comparison data unless a threshold and repeatability support a conclusion;
-SGLang remains unvalidated on this platform.
-```
+Report at minimum:
 
-Until Sections 13.1-13.3 are complete, do not state that a real vLLM service
-has proven the plugin's complete generic execution chain. Until Section 13.4
-is complete, do not state that all outputs are byte-for-byte identical.
+- request count and success rate;
+- TTFT p50/p95;
+- TPOT/ITL p50/p95;
+- end-to-end latency p50/p95/p99;
+- input and output token throughput;
+- aggregate request throughput;
+- round-to-round variation;
+- absolute and relative differences between run A and run B.
+
+The comparison is between vLLM's native binding control and the plugin's forced
+generic path, because both runs keep `--numa-bind` enabled. Do not describe it
+as "unbound versus bound." Without a predefined threshold, label performance as
+comparison data rather than `PASS` or `FAIL`, and do not guarantee an
+improvement from a positive point estimate.
+
+### Required Authoritative Report
+
+Write `report.md` in Chinese with these sections:
+
+1. Executive conclusion and exact tested commit.
+2. Authority statement: Qwen3-32B TP=4 is the primary vLLM acceptance case;
+   Qwen3-8B TP=1 is historical supporting evidence only.
+3. Environment, model, logical-device/physical-board inventory, and isolation
+   decision.
+4. Stage matrix with command, return code, status, and evidence path.
+5. Source, Provider/topology, and controlled Hook regression evidence.
+6. TP=4 ordered device mapping and complete PCIe/NUMA table.
+7. Real-service plugin execution chain.
+8. EngineCore and four-rank Worker process-correlation table.
+9. Inference-result consistency result.
+10. Performance comparison and limitations.
+11. Failures and blockers classified as code, environment, workload, or test
+    harness.
+12. Confirmed capabilities, unverified capabilities, and recommended next
+    action.
+
+The report must clearly separate what is proven by source tests, Provider and
+topology probes, controlled dummy spawn, real TP=4 service, result consistency,
+and performance data. Do not infer DP, Ray, SGLang, another model, another
+device order, or production-wide performance from this case.
+
+Return the completed report and artifacts to the requesting Agent. Do not edit
+the repository's existing self-validation document; it will be updated after
+the report is reviewed.
+
+## Task 2: Pending Ascend Validation - Keep Until Completed
+
+This is a separate target-environment task and is intentionally retained. Do
+not delete or mark it complete based on the 184 Iluvatar result. Do not execute
+it on 184 and do not infer Ascend behavior from Iluvatar.
+
+### Current Source Scope to Validate
+
+The current source includes:
+
+- vLLM support for the `ascend-sysfs-pci` Provider;
+- Ascend short and long BDF parsing through
+  `devdrv_sysfs_bdf_to_devid`;
+- supported vLLM base `0.25.1`, including vendor-local versions;
+- SGLang Provider selection for explicit `ascend-sysfs-pci` and automatic
+  selection when `ASCEND_RT_VISIBLE_DEVICES` is present and no direct runtime
+  BDF is available.
+
+These are source-level claims until the corresponding real Ascend environment
+tests pass.
+
+### Ascend Safety Boundary
+
+- Begin read-only and inventory the actual Ascend host/container, active TP=8
+  or other services, NPU occupancy, ports, and repository state.
+- Do not inject the plugin into a shared running service and do not stop or
+  reconfigure an existing service.
+- Use a dedicated container and isolated devices for Hook, process-binding, or
+  real-service validation. If unavailable, run only source/Provider read-only
+  checks and mark integration stages `BLOCKED`.
+- Do not modify version gates, sysfs data, framework source, or plugin source to
+  force a pass.
+
+### Ascend vLLM Validation
+
+On the target vLLM `0.25.1` vendor environment, validate in order:
+
+1. exact plugin commit and clean checkout;
+2. source tests and entry-point metadata;
+3. `ASCEND_RT_VISIBLE_DEVICES` parsing, including nontrivial ordered visibility;
+4. complete logical-device to physical ID to BDF mapping from the real Ascend
+   sysfs table;
+5. BDF to PCIe path, NUMA node, CPU intersection, and all-or-nothing batch
+   result for all selected devices;
+6. vLLM Hook installation in an isolated process;
+7. forced-generic and native-empty fallback through the original vLLM
+   `numactl` execution path;
+8. observed child CPU affinity and memory policy;
+9. a real isolated service and request only when dedicated resources exist.
+
+The earlier read-only 8/8 Provider mapping result proves mapping only. It does
+not prove vLLM Hook installation or real service binding.
+
+### Ascend SGLang Validation
+
+When an isolated SGLang 0.5.18 Ascend environment is available, validate:
+
+1. package discovery through `sglang.srt.plugins`;
+2. installation of the around Hook on
+   `get_numa_node_if_available`;
+3. explicit `ascend-sysfs-pci` and `auto` Provider selection separately;
+4. native result precedence and native-empty generic fallback;
+5. all visible logical devices mapped through
+   `ASCEND_RT_VISIBLE_DEVICES -> sysfs BDF -> Linux NUMA`;
+6. original SGLang subprocess/`numactl` launch behavior;
+7. Worker CPU affinity and memory policy;
+8. one real request for a TP=1 service, then a separate multi-GPU TP case;
+9. DP, Ray, or external-launcher paths only as separate tests when they are in
+   delivery scope.
+
+Do not reuse the old statement that Ascend is not wired into SGLang; source
+commit `de5bd6a` added that path. Real Ascend SGLang lifecycle support remains
+unverified until this task produces runtime evidence.
+
+### Ascend Report
+
+Return a separate report containing:
+
+1. exact host/container/runtime/framework/plugin versions and commit;
+2. safety and isolation decision;
+3. command/status/evidence matrix;
+4. logical device to BDF to NUMA mapping table;
+5. vLLM source, Hook, child-binding, and real-service results;
+6. SGLang source, Hook, child-binding, and real-service results;
+7. failures classified as code, environment, or harness;
+8. confirmed and unverified boundaries.
+
+Do not merge the Ascend report into the 184 Qwen3-32B TP=4 authority report.
