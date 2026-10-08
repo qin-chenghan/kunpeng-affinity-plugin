@@ -73,6 +73,29 @@ Test the current remote commit containing the SGLang Ascend integration
 (`de5bd6a`) or a later commit explicitly identified in the report. Do not test
 an older checkout and describe it as current.
 
+### vLLM 0.23 Loading and Reachability Boundary
+
+The package entry point and the real `vllm serve` loading path are separate
+acceptance facts. Installing the package proves that
+`vllm.general_plugins` metadata exists; it does not prove that the selected
+vLLM process calls `load_general_plugins()`.
+
+For every real-service run, record these facts separately:
+
+1. entry-point metadata is present in the interpreter used by vLLM;
+2. the actual service process calls the loader and invokes `register()`;
+3. the Hook is installed in the process that later calls
+   `configure_subprocess()`;
+4. the Hook makes a decision rather than deferring to an already populated
+   native result.
+
+If the vLLM 0.23 `vllm serve` path does not call `load_general_plugins()`, a
+temporary validation-only bootstrap such as `sitecustomize.py` may be used to
+separate the plugin behavior from the loader behavior. Record that this is an
+external bootstrap and do not report it as vLLM automatic discovery or as a
+product installation requirement. Do not modify the vLLM image or source to
+make the loader run.
+
 ### Result Directory
 
 Create one unique result directory outside the checkout, for example:
@@ -252,6 +275,26 @@ vLLM discovers plugin
 A healthy service or a generic vLLM binding message without this chain is not
 sufficient plugin evidence.
 
+The current plugin intentionally preserves a non-empty `numa_bind_nodes` value.
+`KUNPENG_AFFINITY_VLLM_FORCE_GENERIC=1` is a diagnostic override for the path
+where that field is still missing; it does not overwrite an explicit user value
+or a value already produced by vLLM's native NUMA query. Therefore classify the
+real-service result as follows:
+
+- no registration or Hook evidence: `BLOCKED` at plugin loading;
+- Hook installed, but vLLM already populated `numa_bind_nodes`: record
+  `PLUGIN_LOADED_NATIVE_PRESERVED`; the generic real-service substage is
+  `BLOCKED` by reachability, while the native control remains valid evidence;
+- Hook installed, native result empty, and generic selection plus process
+  evidence observed: generic execution-chain `PASS`;
+- service response or vLLM binding logs without the preceding evidence: not a
+  plugin execution-chain pass.
+
+Do not change the core explicit/native priority merely to make the 184 platform
+reach the generic branch. The controlled dummy-spawn result remains valid
+evidence for generic binding when the real service's native result makes that
+branch unreachable.
+
 ### Stage E: Per-Process Binding Verification
 
 For both runs, correlate every relevant process in one table:
@@ -321,11 +364,14 @@ Report at minimum:
 - round-to-round variation;
 - absolute and relative differences between run A and run B.
 
-The comparison is between vLLM's native binding control and the plugin's forced
-generic path, because both runs keep `--numa-bind` enabled. Do not describe it
-as "unbound versus bound." Without a predefined threshold, label performance as
-comparison data rather than `PASS` or `FAIL`, and do not guarantee an
-improvement from a positive point estimate.
+The intended comparison is between vLLM's native binding control and the
+plugin's generic path, because both runs keep `--numa-bind` enabled. Do not
+describe it as "unbound versus bound." If run B defers to the native result,
+there is no plugin-vs-native performance comparison; mark that performance
+substage `BLOCKED` and retain only the native-service measurements. Without a
+predefined threshold, label a valid comparison as comparison data rather than
+`PASS` or `FAIL`, and do not guarantee an improvement from a positive point
+estimate.
 
 ### Required Authoritative Report
 
@@ -337,15 +383,17 @@ Write `report.md` in Chinese with these sections:
 3. Environment, model, logical-device/physical-board inventory, and isolation
    decision.
 4. Stage matrix with command, return code, status, and evidence path.
-5. Source, Provider/topology, and controlled Hook regression evidence.
-6. TP=4 ordered device mapping and complete PCIe/NUMA table.
-7. Real-service plugin execution chain.
-8. EngineCore and four-rank Worker process-correlation table.
-9. Inference-result consistency result.
-10. Performance comparison and limitations.
-11. Failures and blockers classified as code, environment, workload, or test
+5. Entry-point metadata, loader invocation, Hook installation, and reachability
+   evidence as separate facts.
+6. Source, Provider/topology, and controlled Hook regression evidence.
+7. TP=4 ordered device mapping and complete PCIe/NUMA table.
+8. Real-service plugin execution chain, including any native-preserved defer.
+9. EngineCore and four-rank Worker process-correlation table.
+10. Inference-result consistency result.
+11. Performance comparison and limitations.
+12. Failures and blockers classified as code, environment, workload, or test
     harness.
-12. Confirmed capabilities, unverified capabilities, and recommended next
+13. Confirmed capabilities, unverified capabilities, and recommended next
     action.
 
 The report must clearly separate what is proven by source tests, Provider and

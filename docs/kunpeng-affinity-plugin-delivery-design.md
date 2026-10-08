@@ -37,7 +37,8 @@
 
 第一阶段以 vLLM `v0.23.0` 为完整开发和验收基线，完成：
 
-- 独立插件包和 `vllm.general_plugins` 自动加载；
+- 独立插件包、`vllm.general_plugins` 注册，以及目标启动路径实际调用
+  loader 时的插件加载；
 - 逻辑设备到可信 BDF 的 Provider 扩展接口；
 - 通用 PCIe/NUMA/CPU 拓扑分析；
 - 显式配置、原生查询和通用查询的优先级决策；
@@ -88,11 +89,18 @@ SGLang `v0.5.18` 作为后续框架适配基线。通用核心、Provider 和结
 | 原生自动查询 | `get_auto_numa_nodes()` 调用当前平台的批量 NUMA 查询并带进程内缓存。 | `vllm/utils/numa_utils.py` |
 | Worker 启动 | `proc.start()` 前动态访问 `numa_utils.configure_subprocess()`。 | `vllm/v1/executor/multiproc_executor.py` |
 | EngineCore 启动 | `proc.start()` 前动态访问同一模块函数。 | `vllm/v1/engine/utils.py` |
-| 插件入口 | `vllm.general_plugins` 由 `load_general_plugins()` 发现和执行。 | `vllm/plugins/__init__.py` |
-| 插件加载时机 | 前端参数初始化和 EngineCore 初始化均早于对应子进程创建。 | `vllm/engine/arg_utils.py`、`vllm/v1/engine/core.py` |
+| 插件入口 | 包通过 `vllm.general_plugins` 注册 callable；只有启动路径实际调用 `load_general_plugins()` 时才会发现并执行。 | `vllm/plugins/__init__.py` |
+| 插件加载时机 | 需要确认目标启动路径是否在第一次 NUMA 查询和对应子进程创建前调用 loader；不能仅凭 entry point 元数据推断已加载。 | `vllm/engine/arg_utils.py`、`vllm/v1/engine/core.py` |
 | 绑定执行 | `configure_subprocess()` 临时替换 spawn executable，由 `numa_wrapper.sh` 执行 `numactl`。 | `vllm/utils/numa_utils.py` |
 
-vLLM `v0.23.0` 没有公开的 NUMA Provider 注册接口。因此插件使用官方 general plugin 作为加载入口，再对受版本控制的内部函数安装 Hook。插件形式是标准 Python 插件，Hook 本身不是 vLLM 承诺长期稳定的公共 NUMA API，必须用兼容性检查和版本矩阵管理风险。
+vLLM `v0.23.0` 没有公开的 NUMA Provider 注册接口。因此插件使用官方
+general-plugin entry point 作为加载入口，再对受版本控制的内部函数安装
+Hook。这里的“使用 entry point”包含两个必须分别验证的事实：安装后元数据可被
+loader 发现，以及目标 `vllm serve` 启动路径确实调用 loader。后者不成立时，
+entry point 不会自动执行，插件不能仅靠安装包进入该服务进程；验证时可以使用
+临时外部 bootstrap 隔离 Hook 行为，但不能将其描述为 vLLM 自动加载能力。插件
+形式是标准 Python 插件，Hook 本身不是 vLLM 承诺长期稳定的公共 NUMA API，必须
+用兼容性检查和版本矩阵管理风险。
 
 ### 2.3 兼容策略
 
@@ -219,7 +227,7 @@ vLLM 第一阶段入口：
 
 ```toml
 [project.entry-points."vllm.general_plugins"]
-kunpeng_affinity = "kunpeng_affinity.plugin:activate_vllm"
+kunpeng_affinity = "kunpeng_affinity.vllm_plugin:register"
 ```
 
 入口函数只做以下工作：
@@ -230,7 +238,7 @@ kunpeng_affinity = "kunpeng_affinity.plugin:activate_vllm"
 4. 幂等安装 vLLM Adapter；
 5. 记录安装结果。
 
-入口函数不得扫描全部 PCIe 设备、调用 GPU 管理工具或提前计算拓扑。实际查询延迟到框架启用 NUMA 绑定且缺少必要自动结果时执行。
+入口函数不得扫描全部 PCIe 设备、调用 GPU 管理工具或提前计算拓扑。实际查询延迟到框架启用 NUMA 绑定且缺少必要自动结果时执行。入口函数是否被执行，取决于目标 vLLM 启动路径是否调用 `load_general_plugins()`。
 
 ## 5. 领域模型与稳定接口
 
@@ -1066,7 +1074,8 @@ Python 源码包（发布时可选 wheel）
 
 ```text
 原 vLLM 命令 + --numa-bind
-  -> vLLM 自动加载 entry point
+  -> vLLM 启动路径调用 load_general_plugins()
+  -> loader 发现并执行 vllm.general_plugins entry point
   -> Adapter 安装 Hook
   -> 子进程启动前决策 explicit/native/generic
   -> 成功时写入完整框架配置
@@ -1095,8 +1104,10 @@ Python 源码包（发布时可选 wheel）
 
 契约测试直接基于目标 vLLM 版本执行：
 
-- entry point 被发现；
-- 加载发生在目标启动点之前；
+- entry point 元数据可被目标解释器发现；
+- 目标启动路径实际调用 `load_general_plugins()` 并执行 callable；
+- callable 执行后 Hook 安装在目标进程中；
+- 加载发生在目标 NUMA 查询和子进程启动点之前；
 - Hook 签名检查通过；
 - 两个调用点动态访问已替换模块属性；
 - `get_auto_numa_nodes()` 缓存不会阻止 generic 回退；
@@ -1186,7 +1197,7 @@ Python 源码包（发布时可选 wheel）
 
 | 能力 | 当前状态 | 与正式设计的差距 |
 |---|---|---|
-| Python 包与 vLLM entry point | 已实现 Demo | 元数据、editable install 及 vLLM 0.26 真实 `load_general_plugins()` 已验证；目标 0.23 完整启动链和所有相关进程的加载时机仍待验证。 |
+| Python 包与 vLLM entry point | 已实现 Demo | entry point 元数据、editable install 及 vLLM 0.26 中显式调用 `load_general_plugins()` 的加载已验证；一次 vLLM 0.23+ 真实 `serve` 验证显示其默认启动路径未调用 loader，因此真实服务自动加载仍受启动路径限制，目标 0.23 的完整进程覆盖仍待验证。 |
 | `configure_subprocess` 幂等 Hook | 已实现 Demo | 已实现版本和签名门控、`off/auto/strict` 模式及正式决策入口；目标 0.23 完整进程生命周期仍待验证。 |
 | BDF 规范化 | 已实现并测试 | 需补全稳定错误码和发布级输入契约。 |
 | sysfs PCIe 父链 | 已实现并测试 | 需增加热插拔复核和可选 port type。 |
@@ -1202,7 +1213,7 @@ Python 源码包（发布时可选 wheel）
 | vLLM 配置提交事务 | 已实现 node 策略 Demo | 已实现锁内同值复用、异值冲突、提交前 visibility 二次复核，以及原执行器进入失败时只回滚插件写入的 nodes；exact CPU 双字段事务和跨 spawn fingerprint 携带仍待实现。 |
 | native -> generic 回退 | 已实现并验证 Demo | 已实现并单测 `explicit -> native -> generic -> skip/fail`，另保留强制 generic 诊断开关；vLLM 0.26 单 GPU auto-fallback dummy spawn 已验证。 |
 | `numactl` 和实际 affinity | 部分验证 | vLLM 0.26 dummy Worker 已通过原 `numactl` wrapper 验证 CPU 和 memory policy；EngineCore、真实 Worker 生命周期及目标 0.23 仍待验证。 |
-| vLLM `v0.23.0` 完整集成 | 待验证 | 源码契约已确认，运行闭环未完成。 |
+| vLLM `v0.23.0` 完整集成 | 部分验证 | 源码契约、entry point 元数据和受控 Hook 行为已确认；真实 `serve` 的默认启动路径未证明会调用 loader，且 EngineCore、Worker、多 GPU和完整服务链仍待验证。 |
 | SGLang 适配 | 已实现 Demo | 已加入 SGLang 0.5.18 的 general-plugin entry point、NUMA 查询 Hook、Torch runtime facade、direct-BDF、Ascend sysfs 和 Iluvatar UUID-BDF 适配；真实服务、多 GPU、Data Parallel 和 Ray 仍待验证。 |
 
 当前源码单元测试共 163 项，覆盖通用拓扑、Provider/批量解析、Registry 无匹配/歧义/显式选择、上下文 BDF、vLLM 平台 BDF 映射、Iluvatar UUID→BDF 映射、Ascend sysfs BDF 映射、SGLang Torch runtime facade、SGLang 显式/native/generic 决策、SGLang Ascend 自动选择与 NUMA fixture、稳定 fingerprint 与可见顺序变化、PCI class 候选发现、node 配置事务与回滚、模拟 vLLM Hook、native 校验、generic 回退、三种插件模式、visibility 提交前变化、兼容门控、显式字段保护和框架执行异常传播。提交 `0e8367e` 已在 vLLM 0.26 单 GPU 隔离环境重新验证：真实插件 entry point 被加载；强制 generic 路径确认 native 查询未调用；auto-fallback 路径确认受控 native 查询调用一次并返回无结果后进入 Registry generic；两条路径均经平台 API 映射到 BDF、生成并复核 fingerprint、通过 Linux sysfs 得出节点，并由原 vLLM `numactl` wrapper 将 dummy Worker CPU affinity 收窄到目标节点，memory policy 也与目标节点一致。该结果不替代目标 0.23、EngineCore、多 GPU、完整服务启动或目标非原生硬件 Provider 的验收。SGLang 新增测试仍只证明源码级契约和 fixture 闭环，不证明真实 SGLang 服务闭环。
@@ -1213,7 +1224,7 @@ Python 源码包（发布时可选 wheel）
 
 | 步骤 | 运行链路 | 状态 | 当前证据与缺口 |
 |---|---|---|---|
-| 1 | vLLM 自动发现并加载插件 | 部分完成 | 已验证 entry point 元数据、editable install 和 vLLM 0.26 真实加载；目标 0.23 完整启动链及各相关进程加载时机仍待验证。 |
+| 1 | vLLM 启动路径发现并加载插件 | 部分完成 | 已验证 entry point 元数据、editable install，以及 vLLM 0.26 中显式调用 `load_general_plugins()` 的真实加载；一次 vLLM 0.23+ 真实 `serve` 未观察到默认 loader 调用，因此默认服务的自动加载仍未成立，各相关进程的加载时机仍待验证。 |
 | 2 | 拦截 Worker 子进程初始化入口 | 已实现 Demo | 已安装版本/签名受控、幂等且保持 context manager 语义的包装器；自动或诊断结果成功后均调用原函数。 |
 | 3 | 提取 rank、逻辑设备和进程上下文 | 部分完成 | 已观察框架配置、rank、进程类型和版本，按平台可见设备数构造有序 `DeviceContext`，并从实际映射生成 visibility fingerprint；TP/DP、多 GPU、跨 spawn fingerprint 携带尚未完成运行验证。 |
 | 4 | 识别并保护用户显式配置 | 已实现 Demo | 仅在 `numa_bind=True` 且节点缺失时运行；显式节点直接委托，显式 CPU 在补齐节点时保持不变，关闭状态不查询。配置模型的全部组合仍需目标版本契约测试。 |
@@ -1227,7 +1238,7 @@ Python 源码包（发布时可选 wheel）
 
 ### 21.3 当前阶段结论
 
-当前可以确认的是：插件已经实现 `explicit -> native -> Registry generic -> skip/fail` 状态机；generic 结果包含有序设备映射 fingerprint，提交前会重新采样，node 配置使用带锁事务并在原执行器进入失败时回滚；Iluvatar UUID→BDF Provider 原型已加入直接 BDF 不可用时的 vLLM 组装路径。提交 `0e8367e` 已在 vLLM 0.26 受控环境完成 logical device 经 BDF、Linux sysfs 到 dummy Worker 实际绑定的回归闭环。下一验证入口是目标 vLLM 0.23+ Iluvatar Runtime、跨 spawn fingerprint 契约、EngineCore 和完整服务生命周期。当前结果不能外推为多 GPU、真实 PCIe Switch 或生产服务验收。
+当前可以确认的是：插件已经实现 `explicit -> native -> Registry generic -> skip/fail` 状态机；generic 结果包含有序设备映射 fingerprint，提交前会重新采样，node 配置使用带锁事务并在原执行器进入失败时回滚；Iluvatar UUID→BDF Provider 原型已加入直接 BDF 不可用时的 vLLM 组装路径。提交 `0e8367e` 已在 vLLM 0.26 受控环境完成 logical device 经 BDF、Linux sysfs 到 dummy Worker 实际绑定的回归闭环。真实 vLLM 0.23+ 服务验证还必须把 entry point 元数据、loader 调用、Hook 安装和实际决策分别取证；若默认启动路径不调用 loader，服务级自动加载不能仅凭安装包成立。当前结果不能外推为多 GPU、真实 PCIe Switch 或生产服务验收。
 
 ## 22. 待决策事项
 

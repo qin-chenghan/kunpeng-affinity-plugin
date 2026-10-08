@@ -32,10 +32,14 @@ the batch non-committable; no binding operation is executed.
 
 ## vLLM plugin behavior
 
-The `vllm.general_plugins` entry point installs an idempotent wrapper around
-`vllm.utils.numa_utils.configure_subprocess`. The wrapper runs only when vLLM's
-own `numa_bind` switch is enabled and `numa_bind_nodes` is absent. Its normal
-decision order is:
+The package registers a `vllm.general_plugins` entry point whose callable
+installs an idempotent wrapper around
+`vllm.utils.numa_utils.configure_subprocess`. The entry point is metadata for
+vLLM's general-plugin loader; package installation alone does not execute the
+callable. The selected vLLM startup path must call
+`load_general_plugins()` before the first relevant subprocess is created. Once
+the callable has run, the wrapper runs only when vLLM's own `numa_bind` switch
+is enabled and `numa_bind_nodes` is absent. Its normal decision order is:
 
 ```text
 explicit nodes -> validated vLLM native nodes -> generic BDF/sysfs nodes
@@ -348,7 +352,9 @@ python3 -m pip wheel --no-deps --wheel-dir dist .
 The resulting `py3-none-any` wheel can be installed on another Linux machine
 with Python 3.10 or newer. The topology CLI and provider/batch core do not
 require vLLM, SGLang, CUDA, or a specific CPU architecture. The vLLM entry point
-is activated only when a compatible vLLM process loads general plugins.
+is executed only when a compatible vLLM process invokes its general-plugin
+loader; entry-point metadata by itself does not prove that a service loaded the
+plugin.
 
 The current Hook implements automatic `native -> generic -> skip/fail`
 selection. Real target-framework service lifecycles and multi-process
