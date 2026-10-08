@@ -1197,7 +1197,7 @@ Python 源码包（发布时可选 wheel）
 
 | 能力 | 当前状态 | 与正式设计的差距 |
 |---|---|---|
-| Python 包与 vLLM entry point | 已实现 Demo | entry point 元数据、editable install 及 vLLM 0.26 中显式调用 `load_general_plugins()` 的加载已验证；一次 vLLM 0.23+ 真实 `serve` 验证显示其默认启动路径未调用 loader，因此真实服务自动加载仍受启动路径限制，目标 0.23 的完整进程覆盖仍待验证。 |
+| Python 包与 vLLM entry point | 已实现 Demo | entry point 元数据、editable install 及 vLLM 0.26 中显式调用 `load_general_plugins()` 的加载已验证；一次 CoreX vendor-local vLLM 0.23 真实 `serve` 验证未观察到所选 API 启动路径执行 loader，但上游 v0.23.0 源码存在多个 loader 调用点，因此需要继续定位该构建和启动入口的差异，不能泛化为上游行为。 |
 | `configure_subprocess` 幂等 Hook | 已实现 Demo | 已实现版本和签名门控、`off/auto/strict` 模式及正式决策入口；目标 0.23 完整进程生命周期仍待验证。 |
 | BDF 规范化 | 已实现并测试 | 需补全稳定错误码和发布级输入契约。 |
 | sysfs PCIe 父链 | 已实现并测试 | 需增加热插拔复核和可选 port type。 |
@@ -1224,7 +1224,7 @@ Python 源码包（发布时可选 wheel）
 
 | 步骤 | 运行链路 | 状态 | 当前证据与缺口 |
 |---|---|---|---|
-| 1 | vLLM 启动路径发现并加载插件 | 部分完成 | 已验证 entry point 元数据、editable install，以及 vLLM 0.26 中显式调用 `load_general_plugins()` 的真实加载；一次 vLLM 0.23+ 真实 `serve` 未观察到默认 loader 调用，因此默认服务的自动加载仍未成立，各相关进程的加载时机仍待验证。 |
+| 1 | vLLM 启动路径发现并加载插件 | 部分完成 | 已验证 entry point 元数据、editable install，以及 vLLM 0.26 中显式调用 `load_general_plugins()` 的真实加载；一次 CoreX vendor-local vLLM 0.23 `serve` 未观察到所选 API 启动路径执行 loader。该结果与上游 v0.23.0 源码中的 loader 调用点需要进一步对照，各相关进程的实际加载时机仍待验证。 |
 | 2 | 拦截 Worker 子进程初始化入口 | 已实现 Demo | 已安装版本/签名受控、幂等且保持 context manager 语义的包装器；自动或诊断结果成功后均调用原函数。 |
 | 3 | 提取 rank、逻辑设备和进程上下文 | 部分完成 | 已观察框架配置、rank、进程类型和版本，按平台可见设备数构造有序 `DeviceContext`，并从实际映射生成 visibility fingerprint；TP/DP、多 GPU、跨 spawn fingerprint 携带尚未完成运行验证。 |
 | 4 | 识别并保护用户显式配置 | 已实现 Demo | 仅在 `numa_bind=True` 且节点缺失时运行；显式节点直接委托，显式 CPU 在补齐节点时保持不变，关闭状态不查询。配置模型的全部组合仍需目标版本契约测试。 |
@@ -1238,7 +1238,7 @@ Python 源码包（发布时可选 wheel）
 
 ### 21.3 当前阶段结论
 
-当前可以确认的是：插件已经实现 `explicit -> native -> Registry generic -> skip/fail` 状态机；generic 结果包含有序设备映射 fingerprint，提交前会重新采样，node 配置使用带锁事务并在原执行器进入失败时回滚；Iluvatar UUID→BDF Provider 原型已加入直接 BDF 不可用时的 vLLM 组装路径。提交 `0e8367e` 已在 vLLM 0.26 受控环境完成 logical device 经 BDF、Linux sysfs 到 dummy Worker 实际绑定的回归闭环。真实 vLLM 0.23+ 服务验证还必须把 entry point 元数据、loader 调用、Hook 安装和实际决策分别取证；若默认启动路径不调用 loader，服务级自动加载不能仅凭安装包成立。当前结果不能外推为多 GPU、真实 PCIe Switch 或生产服务验收。
+当前可以确认的是：插件已经实现 `explicit -> native -> Registry generic -> skip/fail` 状态机；generic 结果包含有序设备映射 fingerprint，提交前会重新采样，node 配置使用带锁事务并在原执行器进入失败时回滚；Iluvatar UUID→BDF Provider 原型已加入直接 BDF 不可用时的 vLLM 组装路径。提交 `0e8367e` 已在 vLLM 0.26 受控环境完成 logical device 经 BDF、Linux sysfs 到 dummy Worker 实际绑定的回归闭环。真实服务验证还必须把 entry point 元数据、loader 调用、Hook 安装进程和实际决策分别取证；CoreX vendor-local vLLM 0.23 的所选 API 启动路径尚未证明会及时加载插件，而上游 v0.23.0 源码存在 loader 调用点，两者差异仍待定位。当前结果不能外推为多 GPU、真实 PCIe Switch 或生产服务验收。
 
 ## 22. 待决策事项
 

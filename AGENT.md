@@ -96,6 +96,60 @@ external bootstrap and do not report it as vLLM automatic discovery or as a
 product installation requirement. Do not modify the vLLM image or source to
 make the loader run.
 
+Do not generalize a vendor-local result to upstream vLLM 0.23. The upstream
+v0.23.0 source contains `load_general_plugins()` calls in argument/config
+initialization, EngineCore initialization, and Worker initialization. If the
+CoreX build behaves differently, preserve the exact vendor version and collect
+the corresponding installed-source call sites or absence thereof. Also record
+`VLLM_PLUGINS`, because a non-empty allowlist can prevent a discovered entry
+point from executing.
+
+### Review Follow-up for the 2026-10-08 TP=4 Report
+
+The first returned report is useful evidence but does not close Task 1. Keep
+the existing artifacts and add a focused follow-up rather than repeating the
+whole benchmark blindly.
+
+Correct these report statements before treating it as authoritative:
+
+- describe the hardware as four runtime logical devices backed by two physical
+  accelerator boards; do not call it four physical cards or say the test
+  treats it as four cards;
+- do not recommend removing `--numa-bind`: the current Hook intentionally
+  requires `parallel_config.numa_bind=True`, and forced-generic does not
+  override that gate;
+- do not classify the loader gap as outside the plugin delivery problem; it is
+  a target-build integration blocker until a supported early loading path is
+  demonstrated;
+- limit “plugin functionality is correct” to the controlled dummy-spawn path;
+  the real TP=4 generic service chain remains unproven.
+
+For the loading/reachability follow-up, retain `--numa-bind`, omit explicit
+`--numa-bind-nodes`, and set forced-generic only for the isolated run B. Prove
+the following in chronological and PID-correlated form:
+
+1. exact entry-point metadata and `VLLM_PLUGINS` value;
+2. the installed CoreX vLLM source call sites that do or do not invoke
+   `load_general_plugins()` for the actual launch command;
+3. the PID and process kind in which `register()` installs the Hook;
+4. the PID that makes the first EngineCore `configure_subprocess()` call;
+5. `numa_bind_nodes` immediately before that first wrapped call;
+6. whether the wrapped call logs the normal per-call plugin context line;
+7. if nodes are already populated, the earlier PID/call that populated them.
+
+A `sitecustomize.py` bootstrap is acceptable only when it executes in the API
+parent before the first EngineCore spawn. A Hook installed later in EngineCore
+or Worker children cannot prove interception of the parent launch. Do not clear
+or overwrite an already populated node list to force reachability.
+
+The report's inference-consistency `PASS` also needs explicit run-A/run-B
+pairing. Provide one machine-readable table containing request ID, arm, round,
+HTTP status, generated-token count, response hash, and pairwise equality. Three
+identical rounds from only one arm are not sufficient. State whether the
+Iluvatar 9-stage suite was rerun at the exact tested checkout or merely cited
+from history, and report one unambiguous tested Git `HEAD`; a documentation-only
+successor may be noted separately.
+
 ### Result Directory
 
 Create one unique result directory outside the checkout, for example:
