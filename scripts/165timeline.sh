@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 
 #   export TEST_ID=20261009_timeline
 #   ./timeline.sh
@@ -64,8 +65,8 @@ MODES="${MODES:-off on}"
 
 # [适配] SGLang 时延采集参数 (对应原脚本 vllm bench serve 的 num-prompts/max-concurrency)
 SGLANG_LATENCY="${SGLANG_LATENCY:-/home/qch/scripts/sglang_latency_online.py}"
-LATENCY_N="${LATENCY_N:-3}"                          # 每 case 重复请求次数(够算 p50/p95)
-LATENCY_CONCURRENCY="${LATENCY_CONCURRENCY:-1}"
+LATENCY_N="${LATENCY_N:-$NUM_PROMPTS}"
+LATENCY_CONCURRENCY="${LATENCY_CONCURRENCY:-$MAX_CONCURRENCY}"
 
 # ============ 目录结构 ============
 BASE_DIR="${BASE_DIR:-/home/qch}"                    # [适配] 165 上脚本/数据固定在 /home/qch
@@ -164,7 +165,7 @@ wait_for_server() {
         fi
         if [ $((elapsed % 60)) -eq 0 ] && [ "$elapsed" -gt 0 ]; then
             log "  ... 仍在等待 server (${elapsed}s); server 日志尾部:"
-            tail_server_log | sed 's/^/    /'
+            tail_server_log | cut -c1-500 | sed 's/^/    /'
         fi
         sleep 5
         elapsed=$((elapsed + 5))
@@ -183,6 +184,8 @@ start_server() {
     local bind_env=""
     if [ "$mode" = "on" ]; then
         bind_env="export KUNPENG_AFFINITY_MODE=auto; export KUNPENG_AFFINITY_PROVIDER=auto; export SGLANG_AUTO_NUMA_BIND=1"
+    else
+        bind_env="export KUNPENG_AFFINITY_MODE=off; export SGLANG_AUTO_NUMA_BIND=0"
     fi
 
     # 启动前清残留(端口号边界匹配, 避免 --port 8005 误杀 --port 80050)
@@ -249,6 +252,18 @@ run_case() {
     fi
     log "==== case $case_idx (mode=$mode): in=$input_len, out=$output_len (collect=$profile_state) ===="
 
+    # 预热同长度输入，避免服务启动后的首次请求污染正式数据。
+    container_exec "python3 $SGLANG_LATENCY \
+      --base-url http://127.0.0.1:$PORT --model '$SERVED_MODEL' \
+      --input-len $input_len --output-len 32 --n 1 --concurrency 1 \
+      --out /tmp/timeline_warmup.json --tag warmup" > "${bench_log}.warmup" 2>&1 || \
+        log "  [WARN] 预热请求失败，详见 ${bench_log}.warmup"
+    curl -sf --noproxy '*' -X POST "http://127.0.0.1:${PORT}/flush_cache" >/dev/null 2>&1 || true
+
+    # 防止本轮失败时误读上一次留下的结果。
+    rm -f "$latency_out"
+    container_exec "rm -f '$latency_out'" >/dev/null 2>&1 || true
+
     # [适配] SGLang: 在线时延采集(打已起 server, 不二次加载模型)
     container_exec "
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
@@ -275,7 +290,7 @@ try:
         n_ok, n_req,
         d.get("ttft_p50_ms"), d.get("tpot_p50_ms"),
         d.get("e2e_mean_s"), d.get("throughput_tok_s")))
-    sys.exit(0 if (n_req > 0 and n_ok > 0) else 1)
+    sys.exit(0 if (n_req > 0 and n_ok == n_req) else 1)
 except SystemExit:
     raise
 except Exception as e:
@@ -288,8 +303,8 @@ PY
             tail -n 40 "$bench_log" >&2 2>/dev/null || true
             return 1
         fi
-    elif [ "$rc" -ne 0 ]; then
-        log "  [ERROR] latency 脚本退出码 $rc, bench 日志尾部:"
+    else
+        log "  [ERROR] latency 未生成结果文件(退出码 $rc), bench 日志尾部:"
         tail -n 40 "$bench_log" >&2 2>/dev/null || true
         return 1
     fi
@@ -318,6 +333,8 @@ log "GPU_LIST:          $GPU_LIST  TP_SIZE: $TP_SIZE"
 log "PORT:              $PORT"
 log "NUM_PROMPTS:       $NUM_PROMPTS"
 log "MAX_CONCURRENCY:   $MAX_CONCURRENCY"
+log "LATENCY_N:         $LATENCY_N"
+log "LATENCY_CONCURRENCY: $LATENCY_CONCURRENCY"
 log "PROFILE_EVERY:     $PROFILE_EVERY (1=全采集, N=每 N 个 case 一次)"
 log "RUN_DIR:           $RUN_DIR"
 log "PROFILE_ROOT_DIR:  $PROFILE_ROOT_DIR"
