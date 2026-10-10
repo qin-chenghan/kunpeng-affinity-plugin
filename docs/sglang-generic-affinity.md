@@ -59,9 +59,9 @@ No logical device is associated with a host GPU by enumeration order.
 ## Current boundary
 
 The implementation accepts the validated source baseline 0.5.18 and the
-observed compatibility build 0.5.17.dev386, and checks the target NUMA-query
+observed compatibility build 0.5.17.dev386+gc5bd3d7dc, and checks the target NUMA-query
 signature before registering the Hook. An Ascend TP=4 service on the observed
-0.5.17.dev386 build has completed startup and inference requests with plugin
+0.5.17.dev386+gc5bd3d7dc build has completed startup and inference requests with plugin
 registration and generic NUMA-path logs. This moves the ordinary Engine path
 beyond source-only validation, but per-process rank, CPU-affinity, and memory-
 policy evidence is still pending. The preliminary performance samples are not

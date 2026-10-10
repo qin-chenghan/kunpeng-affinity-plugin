@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _HOOK_MARKER = "__kunpeng_affinity_sglang_hook__"
 _HOOK_TARGET = "sglang.srt.utils.numa_utils.get_numa_node_if_available"
 _REQUIRED_HOOK_PARAMETERS = {"server_args", "gpu_id"}
-_SUPPORTED_SGLANG_VERSIONS = frozenset({"0.5.17.dev386", "0.5.18"})
+_SUPPORTED_SGLANG_VERSIONS = frozenset({"0.5.17.dev386+gc5bd3d7dc", "0.5.18"})
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 

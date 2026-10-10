@@ -151,7 +151,7 @@ fallback behavior continues; `strict` raises from the query hook.
 `SGLANG_AUTO_NUMA_BIND=0` and explicit `server_args.numa_node` are always
 respected.
 
-This first adapter covers SGLang 0.5.18 and the observed 0.5.17.dev386
+This first adapter covers SGLang 0.5.18 and the observed 0.5.17.dev386+gc5bd3d7dc
 compatibility build on the ordinary Engine subprocess path. It validates the
 target NUMA-query signature before registering the Hook. The Data Parallel
 controller and Ray actor path have separate launch/binding code; generic
@@ -182,7 +182,7 @@ SGLANG_PLUGINS=kunpeng_affinity sglang serve <model-path>
 ```
 
 The source-level entry point and fake-runtime tests prove packaging and hook
-semantics. In addition, an Ascend TP=4 service on the observed 0.5.17.dev386
+semantics. In addition, an Ascend TP=4 service on the observed 0.5.17.dev386+gc5bd3d7dc
 build has completed startup and inference requests with plugin and generic
 NUMA-path logs. Per-process rank, CPU-affinity, and memory-policy evidence is
 still pending, so this does not yet establish a complete multi-GPU lifecycle
