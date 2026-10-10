@@ -142,30 +142,58 @@ class SglangRuntimeProviderTest(unittest.TestCase):
 
             class Cuda:
                 def device_count(self) -> int:
-                    return 1
+                    return 0
 
                 def get_device_properties(self, _device_id: int) -> FakeProperties:
-                    return FakeProperties()
+                    raise AssertionError("Ascend sysfs resolution must not query CUDA identity")
 
             fake_torch = types.SimpleNamespace(cuda=Cuda())
-            with (
-                patch.dict("os.environ", {"ASCEND_RT_VISIBLE_DEVICES": "0"}, clear=False),
-                patch(
-                    "kunpeng_affinity.topology.analyzer.os.sched_getaffinity",
-                    return_value=set(range(8, 12)),
-                    create=True,
-                ),
-            ):
-                node = resolve_sglang_numa_node(
-                    0,
-                    torch_module=fake_torch,
-                    sysfs_root=root,
-                    provider="ascend-sysfs-pci",
-                )
+            for provider in ("auto", "ascend-sysfs-pci"):
+                with self.subTest(provider=provider):
+                    with (
+                        patch.dict("os.environ", {"ASCEND_RT_VISIBLE_DEVICES": "0"}, clear=False),
+                        patch(
+                            "kunpeng_affinity.topology.analyzer.os.sched_getaffinity",
+                            return_value=set(range(8, 12)),
+                            create=True,
+                        ),
+                    ):
+                        node = resolve_sglang_numa_node(
+                            0,
+                            torch_module=fake_torch,
+                            sysfs_root=root,
+                            provider=provider,
+                        )
 
-            self.assertEqual(node, 1)
+                    self.assertEqual(node, 1)
         finally:
             tempdir.cleanup()
+
+    def test_ascend_visibility_builds_complete_batch_when_cuda_count_is_zero(self) -> None:
+        class Cuda:
+            def device_count(self) -> int:
+                return 0
+
+        fake_torch = types.SimpleNamespace(cuda=Cuda())
+        result = types.SimpleNamespace(
+            committable=True,
+            visibility_fingerprint="same",
+            ordered_results=tuple(
+                types.SimpleNamespace(affinity=types.SimpleNamespace(numa_node=node)) for node in (1, 1, 3, 3)
+            ),
+        )
+        with (
+            patch.dict("os.environ", {"ASCEND_RT_VISIBLE_DEVICES": "3,1,7,2"}, clear=False),
+            patch(
+                "kunpeng_affinity.policy.GenericAffinityProvider.resolve_all",
+                return_value=result,
+            ) as resolve,
+        ):
+            node = resolve_sglang_numa_node(3, torch_module=fake_torch)
+
+        self.assertEqual(node, 3)
+        contexts = resolve.call_args_list[0].args[0]
+        self.assertEqual([context.logical_device_id for context in contexts], [0, 1, 2, 3])
 
     def test_runtime_bdf_query_failure_is_a_discovery_error(self) -> None:
         class Cuda(FakeCuda):

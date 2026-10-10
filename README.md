@@ -139,14 +139,16 @@ decision order is:
 explicit server_args.numa_node -> SGLang native query -> generic runtime BDF/NUMA query
 ```
 
-The SGLang adapter uses a small Torch runtime facade. If the runtime exposes a
-direct PCI BDF, it is used. Otherwise, `ASCEND_RT_VISIBLE_DEVICES` selects the
-Ascend sysfs BDF-to-device mapping; on other platforms, a runtime UUID is
-joined to the Iluvatar `ixsmi` UUID/BDF inventory. The generic Linux topology
-analyzer then proves the NUMA node and CPU intersection. If discovery fails,
-`auto` returns `None` so SGLang's normal fallback behavior continues; `strict`
-raises from the query hook. `SGLANG_AUTO_NUMA_BIND=0` and explicit
-`server_args.numa_node` are always respected.
+When `ASCEND_RT_VISIBLE_DEVICES` is set, the SGLang adapter uses that ordered
+visibility list to build the complete device batch and selects the Ascend sysfs
+BDF-to-device mapping without consulting `torch.cuda`. On other platforms, a
+small Torch runtime facade supplies the device count and either a direct PCI
+BDF or a runtime UUID that is joined to the Iluvatar `ixsmi` UUID/BDF
+inventory. The generic Linux topology analyzer then proves the NUMA node and
+CPU intersection. If discovery fails, `auto` returns `None` so SGLang's normal
+fallback behavior continues; `strict` raises from the query hook.
+`SGLANG_AUTO_NUMA_BIND=0` and explicit `server_args.numa_node` are always
+respected.
 
 This first adapter covers SGLang 0.5.18's ordinary Engine subprocess path.
 The Data Parallel controller and Ray actor path have separate launch/binding

@@ -30,11 +30,12 @@ otherwise
   -> strict: raise the discovery failure
 ```
 
-The generic adapter first accepts a direct runtime BDF when Torch exposes one.
-If it does not and `ASCEND_RT_VISIBLE_DEVICES` is set, it uses the Ascend
-sysfs BDF-to-device mapping. On other platforms it obtains a runtime UUID and
-uses the Iluvatar provider's UUID-to-`ixsmi`-BDF mapping. The shared topology
-layer then follows the Linux PCI parent chain and computes:
+When `ASCEND_RT_VISIBLE_DEVICES` is set, the generic adapter builds the complete
+logical-device batch from that ordered list and uses the Ascend sysfs
+BDF-to-device mapping without consulting `torch.cuda`. On other platforms it
+first accepts a direct runtime BDF when Torch exposes one, then falls back to a
+runtime UUID and the Iluvatar provider's UUID-to-`ixsmi`-BDF mapping. The shared
+topology layer then follows the Linux PCI parent chain and computes:
 
 ```text
 NUMA node CPUs ∩ online CPUs ∩ current process allowed CPUs

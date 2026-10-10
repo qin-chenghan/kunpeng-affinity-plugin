@@ -9,7 +9,11 @@ from typing import Any
 
 from kunpeng_affinity.core.errors import DeviceMappingError
 from kunpeng_affinity.core.models import DeviceContext, DeviceMapping, ProbeResult
-from kunpeng_affinity.providers.ascend_sysfs import AscendSysfsProvider
+from kunpeng_affinity.providers.ascend_sysfs import (
+    ASCEND_VISIBLE_DEVICES,
+    AscendSysfsProvider,
+    parse_visible_device_ids,
+)
 from kunpeng_affinity.providers.iluvatar_runtime import IluvatarRuntimeProvider
 from kunpeng_affinity.topology.analyzer import normalize_bdf
 
@@ -110,6 +114,22 @@ def _valid_bdf(value: object) -> str | None:
         return None
 
 
+def _uses_ascend_visibility(provider: str, environ: Mapping[str, str]) -> bool:
+    return provider == AscendSysfsProvider.name or (
+        provider == "auto" and environ.get(ASCEND_VISIBLE_DEVICES) is not None
+    )
+
+
+def _visible_device_count(
+    platform: SglangTorchPlatform,
+    provider: str,
+    environ: Mapping[str, str],
+) -> int:
+    if _uses_ascend_visibility(provider, environ):
+        return len(parse_visible_device_ids(environ.get(ASCEND_VISIBLE_DEVICES)))
+    return platform.device_count()
+
+
 class SglangRuntimeProvider:
     """Map SGLang visible GPU ids using runtime BDF or UUID evidence."""
 
@@ -143,7 +163,7 @@ class SglangRuntimeProvider:
         return ProbeResult(provider=self.name, supported=True)
 
     def map_all(self, contexts: Sequence[DeviceContext]) -> tuple[DeviceMapping, ...]:
-        if self.requested_provider == AscendSysfsProvider.name:
+        if _uses_ascend_visibility(self.requested_provider, self.environ):
             return AscendSysfsProvider(
                 sysfs_root=self.sysfs_root,
                 environ=self.environ,
@@ -174,11 +194,6 @@ class SglangRuntimeProvider:
                 "SGLang runtime returned only a partial direct BDF mapping",
                 code="DEVICE_MAPPING_PARTIAL",
             )
-        if self.requested_provider == "auto" and self.environ.get("ASCEND_RT_VISIBLE_DEVICES") is not None:
-            return AscendSysfsProvider(
-                sysfs_root=self.sysfs_root,
-                environ=self.environ,
-            ).map_all(contexts)
         # A complete direct mapping is required; otherwise use UUID-to-BDF evidence.
         provider = IluvatarRuntimeProvider(
             self.platform,
@@ -217,7 +232,8 @@ def resolve_sglang_numa_node(
     from kunpeng_affinity.policy import GenericAffinityProvider
 
     platform = SglangTorchPlatform(torch_module)
-    count = platform.device_count()
+    environ = os.environ
+    count = _visible_device_count(platform, provider, environ)
     if gpu_id < 0 or gpu_id >= count:
         raise DeviceMappingError(
             f"SGLang GPU id {gpu_id} is outside visible range 0..{count - 1}",
@@ -230,6 +246,7 @@ def resolve_sglang_numa_node(
             requested_provider=provider,
             ixsmi=ixsmi,
             sysfs_root=sysfs_root,
+            environ=environ,
         ),
         sysfs_root=sysfs_root,
         snapshot_metadata={
