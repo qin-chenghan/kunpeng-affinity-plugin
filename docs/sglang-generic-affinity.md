@@ -58,13 +58,18 @@ No logical device is associated with a host GPU by enumeration order.
 
 ## Current boundary
 
-The implementation is source-level and fake-runtime tested. It accepts the
-validated source baseline 0.5.18 and the observed compatibility build
-0.5.17.dev386, and checks the target NUMA-query signature before registering
-the Hook. It does not claim real SGLang service validation, multi-GPU rank
-validation, Data Parallel controller coverage, or Ray actor coverage. Generic
-fallback fails closed on Data Parallel and Ray call sites until their separate
-launch contracts are validated. It also fails closed when
+The implementation accepts the validated source baseline 0.5.18 and the
+observed compatibility build 0.5.17.dev386, and checks the target NUMA-query
+signature before registering the Hook. An Ascend TP=4 service on the observed
+0.5.17.dev386 build has completed startup and inference requests with plugin
+registration and generic NUMA-path logs. This moves the ordinary Engine path
+beyond source-only validation, but per-process rank, CPU-affinity, and memory-
+policy evidence is still pending. The preliminary performance samples are not
+a final performance result; see `sglang-ascend-tp4-validation-progress.md`.
+
+The adapter does not claim Data Parallel controller or Ray actor coverage.
+Generic fallback fails closed on those call sites until their separate launch
+contracts are validated. It also fails closed when
 `SGLANG_SET_CPU_AFFINITY=1` would overwrite the resulting CPU affinity.
 
 The default V2 subprocess path requires `numactl`. Without that executable,

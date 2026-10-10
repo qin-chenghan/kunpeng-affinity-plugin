@@ -182,7 +182,12 @@ SGLANG_PLUGINS=kunpeng_affinity sglang serve <model-path>
 ```
 
 The source-level entry point and fake-runtime tests prove packaging and hook
-semantics, but do not yet prove a real SGLang 0.5.18 multi-GPU lifecycle.
+semantics. In addition, an Ascend TP=4 service on the observed 0.5.17.dev386
+build has completed startup and inference requests with plugin and generic
+NUMA-path logs. Per-process rank, CPU-affinity, and memory-policy evidence is
+still pending, so this does not yet establish a complete multi-GPU lifecycle
+or a formal performance result. See
+`docs/sglang-ascend-tp4-validation-progress.md`.
 
 ## One-command Iluvatar validation
 
