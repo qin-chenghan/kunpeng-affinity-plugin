@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from kunpeng_affinity.adapters.sglang_generic import (
     SglangRuntimeProvider,
@@ -14,6 +15,7 @@ from kunpeng_affinity.adapters.sglang_generic import (
 )
 from kunpeng_affinity.config import CpuPolicy, PluginConfig, PluginMode
 from kunpeng_affinity.core.errors import (
+    AffinityIntegrationError,
     DeviceMappingError,
     NativeContractError,
     PluginConfigError,
@@ -21,8 +23,11 @@ from kunpeng_affinity.core.errors import (
 from kunpeng_affinity.core.models import DeviceContext, NativeStatus
 from kunpeng_affinity.sglang_plugin import (
     _around_numa_query,
+    _check_generic_binding_prerequisites,
     _classify_native_node,
     _generic_node,
+    _unsupported_generic_call_site,
+    _validate_hook_signature,
     register,
 )
 
@@ -148,7 +153,7 @@ class SglangRuntimeProviderTest(unittest.TestCase):
                     raise AssertionError("Ascend sysfs resolution must not query CUDA identity")
 
             fake_torch = types.SimpleNamespace(cuda=Cuda())
-            for provider in ("auto", "ascend-sysfs-pci"):
+            for provider in ("auto", "sglang-runtime-pci", "ascend-sysfs-pci"):
                 with self.subTest(provider=provider):
                     with (
                         patch.dict("os.environ", {"ASCEND_RT_VISIBLE_DEVICES": "0"}, clear=False),
@@ -231,6 +236,49 @@ class SglangRuntimeProviderTest(unittest.TestCase):
 
 
 class SglangHookDecisionTest(unittest.TestCase):
+    def test_v1_binding_does_not_require_numactl_command(self) -> None:
+        node = MagicMock()
+        node.is_dir.return_value = True
+        fake_utils = types.ModuleType("sglang.srt.utils")
+        fake_utils.numa_utils = types.SimpleNamespace(_can_set_mempolicy=lambda: True)
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "sglang": types.ModuleType("sglang"),
+                    "sglang.srt": types.ModuleType("sglang.srt"),
+                    "sglang.srt.utils": fake_utils,
+                },
+            ),
+            patch.dict("os.environ", {"SGLANG_NUMA_BIND_V2": "0"}, clear=False),
+            patch("kunpeng_affinity.sglang_plugin.Path.glob", return_value=[node, node]),
+            patch("kunpeng_affinity.sglang_plugin.shutil.which") as which,
+        ):
+            _check_generic_binding_prerequisites()
+
+        which.assert_not_called()
+
+    def test_hook_signature_requires_server_args_and_gpu_id(self) -> None:
+        _validate_hook_signature(lambda server_args, gpu_id: None)
+
+        with self.assertRaisesRegex(RuntimeError, "missing parameters: gpu_id"):
+            _validate_hook_signature(lambda server_args: None)
+
+    def test_unvalidated_call_sites_are_identified(self) -> None:
+        self.assertIn(
+            "data-parallel",
+            _unsupported_generic_call_site(types.SimpleNamespace(dp_size=2, use_ray=False)) or "",
+        )
+        self.assertIn(
+            "Ray",
+            _unsupported_generic_call_site(types.SimpleNamespace(dp_size=1, use_ray=True)) or "",
+        )
+        with patch.dict("os.environ", {"SGLANG_SET_CPU_AFFINITY": "1"}, clear=False):
+            self.assertIn(
+                "overwrite",
+                _unsupported_generic_call_site(types.SimpleNamespace(dp_size=1, use_ray=False)) or "",
+            )
+
     def test_generic_node_forwards_ascend_provider(self) -> None:
         with (
             patch("kunpeng_affinity.sglang_plugin._check_generic_binding_prerequisites"),
@@ -283,7 +331,7 @@ class SglangHookDecisionTest(unittest.TestCase):
         generic.assert_not_called()
 
     def test_generic_node_is_used_when_native_query_is_empty(self) -> None:
-        server_args = types.SimpleNamespace(numa_node=None)
+        server_args = types.SimpleNamespace(numa_node=None, dp_size=1, use_ray=False)
         with patch("kunpeng_affinity.sglang_plugin._generic_node", return_value=4) as generic:
             result = _around_numa_query(
                 lambda _args, _gpu: None,
@@ -295,6 +343,29 @@ class SglangHookDecisionTest(unittest.TestCase):
 
         self.assertEqual(result, 4)
         generic.assert_called_once_with(0, "auto")
+
+    def test_unvalidated_call_site_does_not_run_generic_fallback(self) -> None:
+        server_args = types.SimpleNamespace(numa_node=None, dp_size=2, use_ray=False)
+        with patch("kunpeng_affinity.sglang_plugin._generic_node") as generic:
+            self.assertIsNone(
+                _around_numa_query(
+                    lambda _args, _gpu: None,
+                    server_args,
+                    0,
+                    mode=PluginMode.AUTO,
+                    provider="auto",
+                )
+            )
+            with self.assertRaisesRegex(DeviceMappingError, "data-parallel"):
+                _around_numa_query(
+                    lambda _args, _gpu: None,
+                    server_args,
+                    0,
+                    mode=PluginMode.STRICT,
+                    provider="auto",
+                )
+
+        generic.assert_not_called()
 
     def test_expected_discovery_failure_skips_and_strict_failure_raises(self) -> None:
         server_args = types.SimpleNamespace(numa_node=None)
@@ -353,6 +424,90 @@ class SglangHookDecisionTest(unittest.TestCase):
             self.assertRaisesRegex(PluginConfigError, "exact CPU policy"),
         ):
             register()
+
+    def test_unvalidated_sglang_version_is_not_registered_in_auto_mode(self) -> None:
+        with (
+            patch("kunpeng_affinity.sglang_plugin.load_plugin_mode", return_value=PluginMode.AUTO),
+            patch("kunpeng_affinity.sglang_plugin.load_plugin_config", return_value=PluginConfig()),
+            patch("kunpeng_affinity.sglang_plugin._sglang_version", return_value="9.9.9"),
+            self.assertLogs("kunpeng_affinity.sglang_plugin", level="WARNING") as captured,
+        ):
+            register()
+
+        self.assertIn("Hook not registered", "\n".join(captured.output))
+
+    def test_unvalidated_sglang_version_fails_in_strict_mode(self) -> None:
+        with (
+            patch("kunpeng_affinity.sglang_plugin.load_plugin_mode", return_value=PluginMode.STRICT),
+            patch("kunpeng_affinity.sglang_plugin.load_plugin_config", return_value=PluginConfig()),
+            patch("kunpeng_affinity.sglang_plugin._sglang_version", return_value="9.9.9"),
+            self.assertRaisesRegex(AffinityIntegrationError, "unsupported SGLang version"),
+        ):
+            register()
+
+    def test_supported_version_and_signature_register_hook(self) -> None:
+        hook_registry = MagicMock()
+        plugins = types.ModuleType("sglang.srt.plugins")
+        plugins.HookRegistry = hook_registry
+        hook_registry_module = types.ModuleType("sglang.srt.plugins.hook_registry")
+        hook_registry_module.HookType = types.SimpleNamespace(AROUND="around")
+        utils = types.ModuleType("sglang.srt.utils")
+        utils.numa_utils = types.SimpleNamespace(get_numa_node_if_available=lambda server_args, gpu_id: None)
+        try:
+            with (
+                patch.dict(
+                    sys.modules,
+                    {
+                        "sglang": types.ModuleType("sglang"),
+                        "sglang.srt": types.ModuleType("sglang.srt"),
+                        "sglang.srt.plugins": plugins,
+                        "sglang.srt.plugins.hook_registry": hook_registry_module,
+                        "sglang.srt.utils": utils,
+                    },
+                ),
+                patch("kunpeng_affinity.sglang_plugin.load_plugin_mode", return_value=PluginMode.AUTO),
+                patch("kunpeng_affinity.sglang_plugin.load_plugin_config", return_value=PluginConfig()),
+                patch("kunpeng_affinity.sglang_plugin._sglang_version", return_value="0.5.18"),
+            ):
+                register()
+
+            hook_registry.register.assert_called_once()
+            self.assertEqual(
+                hook_registry.register.call_args.args[0],
+                "sglang.srt.utils.numa_utils.get_numa_node_if_available",
+            )
+        finally:
+            if hasattr(register, "__kunpeng_affinity_sglang_hook__"):
+                delattr(register, "__kunpeng_affinity_sglang_hook__")
+
+    def test_incompatible_signature_is_not_registered_in_auto_mode(self) -> None:
+        hook_registry = MagicMock()
+        plugins = types.ModuleType("sglang.srt.plugins")
+        plugins.HookRegistry = hook_registry
+        hook_registry_module = types.ModuleType("sglang.srt.plugins.hook_registry")
+        hook_registry_module.HookType = types.SimpleNamespace(AROUND="around")
+        utils = types.ModuleType("sglang.srt.utils")
+        utils.numa_utils = types.SimpleNamespace(get_numa_node_if_available=lambda server_args: None)
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "sglang": types.ModuleType("sglang"),
+                    "sglang.srt": types.ModuleType("sglang.srt"),
+                    "sglang.srt.plugins": plugins,
+                    "sglang.srt.plugins.hook_registry": hook_registry_module,
+                    "sglang.srt.utils": utils,
+                },
+            ),
+            patch("kunpeng_affinity.sglang_plugin.load_plugin_mode", return_value=PluginMode.AUTO),
+            patch("kunpeng_affinity.sglang_plugin.load_plugin_config", return_value=PluginConfig()),
+            patch("kunpeng_affinity.sglang_plugin._sglang_version", return_value="0.5.18"),
+            self.assertLogs("kunpeng_affinity.sglang_plugin", level="WARNING") as captured,
+        ):
+            register()
+
+        hook_registry.register.assert_not_called()
+        self.assertIn("Hook not registered", "\n".join(captured.output))
 
 
 if __name__ == "__main__":

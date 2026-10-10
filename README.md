@@ -141,7 +141,8 @@ explicit server_args.numa_node -> SGLang native query -> generic runtime BDF/NUM
 
 When `ASCEND_RT_VISIBLE_DEVICES` is set, the SGLang adapter uses that ordered
 visibility list to build the complete device batch and selects the Ascend sysfs
-BDF-to-device mapping without consulting `torch.cuda`. On other platforms, a
+BDF-to-device mapping without consulting `torch.cuda`. This applies to `auto`,
+`sglang-runtime-pci`, and explicit `ascend-sysfs-pci` selection. On other platforms, a
 small Torch runtime facade supplies the device count and either a direct PCI
 BDF or a runtime UUID that is joined to the Iluvatar `ixsmi` UUID/BDF
 inventory. The generic Linux topology analyzer then proves the NUMA node and
@@ -150,10 +151,29 @@ fallback behavior continues; `strict` raises from the query hook.
 `SGLANG_AUTO_NUMA_BIND=0` and explicit `server_args.numa_node` are always
 respected.
 
-This first adapter covers SGLang 0.5.18's ordinary Engine subprocess path.
-The Data Parallel controller and Ray actor path have separate launch/binding
-code and remain outside the current validated scope. The adapter is covered by
-fake-runtime contract tests; no real SGLang service is started by the tests.
+This first adapter covers SGLang 0.5.18 and the observed 0.5.17.dev386
+compatibility build on the ordinary Engine subprocess path. It validates the
+target NUMA-query signature before registering the Hook. The Data Parallel
+controller and Ray actor path have separate launch/binding code; generic
+fallback is explicitly skipped there until those paths are validated. Generic
+fallback is also skipped when `SGLANG_SET_CPU_AFFINITY=1`, because that feature
+would overwrite the NUMA-derived CPU affinity after process launch. The adapter
+is covered by fake-runtime contract tests; no real SGLang service is started by
+the tests.
+
+SGLang's default `SGLANG_NUMA_BIND_V2=1` path requires the `numactl` command. If
+it is absent, `auto` mode logs the missing executor and leaves the process
+unmodified. Setting `SGLANG_NUMA_BIND_V2=0` selects SGLang's in-process libnuma
+path, which does not require the command but still requires usable libnuma and
+memory-policy permissions. This is an explicit execution-mode choice, not an
+automatic equivalent replacement for V2.
+
+SGLang's general-plugin loader catches exceptions raised while executing a
+plugin entry point. Consequently, a `strict` version or signature failure
+during `register()` is reported by SGLang but may not terminate framework
+startup. Strict failures raised later by the applied NUMA-query Hook still
+propagate. Confirm both this plugin's `registered` message and SGLang's
+`Applied hook` message during integration validation.
 
 After source installation, SGLang can restrict discovery to this plugin with:
 

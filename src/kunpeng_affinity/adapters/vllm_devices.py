@@ -15,6 +15,10 @@ from kunpeng_affinity.providers import (
     ProviderRegistry,
     VllmPlatformProvider,
 )
+from kunpeng_affinity.providers.ascend_sysfs import (
+    ASCEND_VISIBLE_DEVICES,
+    parse_visible_device_ids,
+)
 
 VLLM_PROVIDER_NAMES = frozenset(
     {
@@ -65,10 +69,12 @@ def create_vllm_provider_registry(
                 ixsmi=os.environ.get("KUNPENG_AFFINITY_IXSMI", "ixsmi"),
             )
         )
-    elif requested_provider == VllmPlatformProvider.name or _has_direct_bdf(platform):
+    elif requested_provider == VllmPlatformProvider.name:
         registry.register(VllmPlatformProvider(platform))
-    elif os.environ.get("ASCEND_RT_VISIBLE_DEVICES") is not None:
+    elif os.environ.get(ASCEND_VISIBLE_DEVICES) is not None:
         registry.register(AscendSysfsProvider(sysfs_root=sysfs_root))
+    elif _has_direct_bdf(platform):
+        registry.register(VllmPlatformProvider(platform))
     else:
         registry.register(
             IluvatarRuntimeProvider(
@@ -80,14 +86,14 @@ def create_vllm_provider_registry(
 
 
 def _has_direct_bdf(platform: Any) -> bool:
-    method = getattr(platform, "get_all_gpu_pci_bus_ids", None)
-    if not callable(method):
-        return False
     try:
-        result = method()
-    except (NotImplementedError, RuntimeError, OSError, ValueError):
+        contexts = build_vllm_device_contexts(
+            platform,
+            requested_provider=VllmPlatformProvider.name,
+        )
+    except AffinityDiscoveryError:
         return False
-    return isinstance(result, Mapping) and bool(result)
+    return bool(VllmPlatformProvider(platform).probe(contexts).supported)
 
 
 def build_vllm_device_contexts(
@@ -97,9 +103,17 @@ def build_vllm_device_contexts(
     local_rank: int | None = None,
     dp_local_rank: int | None = None,
     allowed_cpus: frozenset[int] | set[int] | None = None,
+    requested_provider: str | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> tuple[DeviceContext, ...]:
     """Build one ordered context for every framework-visible device."""
-    count = vllm_device_count(platform)
+    active_environ = os.environ if environ is None else environ
+    if requested_provider == AscendSysfsProvider.name or (
+        requested_provider in {None, "auto"} and active_environ.get(ASCEND_VISIBLE_DEVICES) is not None
+    ):
+        count = len(parse_visible_device_ids(active_environ.get(ASCEND_VISIBLE_DEVICES)))
+    else:
+        count = vllm_device_count(platform)
     if allowed_cpus is not None:
         effective_allowed = frozenset(allowed_cpus)
     else:

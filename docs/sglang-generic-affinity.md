@@ -32,7 +32,8 @@ otherwise
 
 When `ASCEND_RT_VISIBLE_DEVICES` is set, the generic adapter builds the complete
 logical-device batch from that ordered list and uses the Ascend sysfs
-BDF-to-device mapping without consulting `torch.cuda`. On other platforms it
+BDF-to-device mapping without consulting `torch.cuda`, including when the
+wrapper Provider `sglang-runtime-pci` is selected explicitly. On other platforms it
 first accepts a direct runtime BDF when Torch exposes one, then falls back to a
 runtime UUID and the Iluvatar provider's UUID-to-`ixsmi`-BDF mapping. The shared
 topology layer then follows the Linux PCI parent chain and computes:
@@ -57,8 +58,23 @@ No logical device is associated with a host GPU by enumeration order.
 
 ## Current boundary
 
-The implementation is source-level and fake-runtime tested. It does not claim
-real SGLang service validation, multi-GPU rank validation, Data Parallel
-controller coverage, or Ray actor coverage. Those paths use separate SGLang
-launch code and require independent contracts before they can be included in
-the supported scope.
+The implementation is source-level and fake-runtime tested. It accepts the
+validated source baseline 0.5.18 and the observed compatibility build
+0.5.17.dev386, and checks the target NUMA-query signature before registering
+the Hook. It does not claim real SGLang service validation, multi-GPU rank
+validation, Data Parallel controller coverage, or Ray actor coverage. Generic
+fallback fails closed on Data Parallel and Ray call sites until their separate
+launch contracts are validated. It also fails closed when
+`SGLANG_SET_CPU_AFFINITY=1` would overwrite the resulting CPU affinity.
+
+The default V2 subprocess path requires `numactl`. Without that executable,
+`auto` mode preserves SGLang's unbound behavior. `SGLANG_NUMA_BIND_V2=0` may be
+used to select SGLang's existing in-process libnuma path; it does not require
+the command, but libnuma availability and memory-policy permission remain
+mandatory.
+
+SGLang catches exceptions raised while executing general-plugin entry points.
+Therefore, `strict` failures detected during plugin registration may be logged
+without aborting framework startup; strict failures raised later by an applied
+query Hook still propagate. Integration validation must observe both the
+plugin's `registered` message and SGLang's `Applied hook` message.

@@ -41,6 +41,7 @@ def resolve_vllm_visibility_fingerprint(
         local_rank=local_rank,
         dp_local_rank=dp_local_rank,
         allowed_cpus=allowed_cpus,
+        requested_provider=requested_provider,
     )
     active_registry = registry or create_vllm_provider_registry(
         platform,
@@ -87,6 +88,7 @@ def resolve_vllm_consumed_device(
         local_rank=local_rank,
         dp_local_rank=dp_local_rank,
         allowed_cpus=allowed_cpus,
+        requested_provider=requested_provider,
     )
     if device_index < 0 or device_index >= len(contexts):
         raise AffinityDiscoveryError(
@@ -142,6 +144,7 @@ def resolve_vllm_generic_affinity(
         local_rank=local_rank,
         dp_local_rank=dp_local_rank,
         allowed_cpus=allowed_cpus,
+        requested_provider=requested_provider,
     )
     active_registry = registry or create_vllm_provider_registry(
         platform,

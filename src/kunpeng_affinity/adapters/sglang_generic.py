@@ -116,7 +116,7 @@ def _valid_bdf(value: object) -> str | None:
 
 def _uses_ascend_visibility(provider: str, environ: Mapping[str, str]) -> bool:
     return provider == AscendSysfsProvider.name or (
-        provider == "auto" and environ.get(ASCEND_VISIBLE_DEVICES) is not None
+        provider in {"auto", SglangRuntimeProvider.name} and environ.get(ASCEND_VISIBLE_DEVICES) is not None
     )
 
 

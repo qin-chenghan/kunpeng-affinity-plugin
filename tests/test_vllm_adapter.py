@@ -140,6 +140,51 @@ class VllmGenericAdapterTest(unittest.TestCase):
         self.assertIsInstance(provider, AscendSysfsProvider)
         self.assertEqual(provider.sysfs_root, self.root)
 
+    def test_auto_ascend_provider_precedes_platform_bdf_api(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"ASCEND_RT_VISIBLE_DEVICES": "0"},
+            clear=False,
+        ):
+            registry = create_vllm_provider_registry(
+                FakePlatform,
+                sysfs_root=self.root,
+            )
+
+        self.assertIsInstance(registry._providers[AscendSysfsProvider.name], AscendSysfsProvider)
+        self.assertEqual(tuple(registry._providers), (AscendSysfsProvider.name,))
+
+    def test_incomplete_platform_bdf_mapping_uses_runtime_fallback(self) -> None:
+        class IncompletePlatform(FakePlatform):
+            @classmethod
+            def device_count(cls):
+                return 2
+
+            @classmethod
+            def get_all_gpu_pci_bus_ids(cls):
+                return {0: "0000:ab:00.0"}
+
+        with patch.dict(os.environ, {}, clear=True):
+            registry = create_vllm_provider_registry(IncompletePlatform)
+
+        self.assertEqual(tuple(registry._providers), ("iluvatar-runtime-pci",))
+
+    def test_ascend_context_batch_does_not_query_platform_device_count(self) -> None:
+        class NonCudaPlatform:
+            @classmethod
+            def device_count(cls):
+                raise AssertionError("Ascend context discovery must not query the CUDA-like platform count")
+
+        for provider in ("auto", AscendSysfsProvider.name):
+            with self.subTest(provider=provider):
+                contexts = build_vllm_device_contexts(
+                    NonCudaPlatform,
+                    requested_provider=provider,
+                    environ={"ASCEND_RT_VISIBLE_DEVICES": "3,1,7,2"},
+                )
+
+                self.assertEqual([context.logical_device_id for context in contexts], [0, 1, 2, 3])
+
     def test_ascend_provider_resolves_complete_linux_affinity(self) -> None:
         attribute = self.root / "bus/pci/devices/0000:ab:00.0/devdrv_sysfs_bdf_to_devid"
         attribute.write_text("0000:ab:00.0 ---> 4\n", encoding="ascii")

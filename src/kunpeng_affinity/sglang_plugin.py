@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import shutil
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,7 @@ from kunpeng_affinity.config import (
     load_plugin_mode,
 )
 from kunpeng_affinity.core.errors import (
+    AffinityIntegrationError,
     DeviceMappingError,
     NativeContractError,
     PluginConfigError,
@@ -24,6 +27,9 @@ from kunpeng_affinity.core.models import NativeOutcome, NativeStatus
 
 logger = logging.getLogger(__name__)
 _HOOK_MARKER = "__kunpeng_affinity_sglang_hook__"
+_HOOK_TARGET = "sglang.srt.utils.numa_utils.get_numa_node_if_available"
+_REQUIRED_HOOK_PARAMETERS = {"server_args", "gpu_id"}
+_SUPPORTED_SGLANG_VERSIONS = frozenset({"0.5.17.dev386", "0.5.18"})
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
@@ -32,6 +38,39 @@ def _env_bool(name: str, default: bool = True) -> bool:
     if value is None:
         return default
     return value.strip().lower() in _TRUE_VALUES
+
+
+def _sglang_version() -> str:
+    try:
+        return version("sglang")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _validate_hook_signature(target: Any) -> None:
+    if not callable(target):
+        raise AffinityIntegrationError(
+            "SGLang NUMA query target is not callable",
+            code="HOOK_SIGNATURE_MISMATCH",
+        )
+    parameters = set(inspect.signature(target).parameters)
+    missing = _REQUIRED_HOOK_PARAMETERS - parameters
+    if missing:
+        raise AffinityIntegrationError(
+            "Unsupported SGLang NUMA query signature; missing parameters: " + ", ".join(sorted(missing)),
+            code="HOOK_SIGNATURE_MISMATCH",
+        )
+
+
+def _unsupported_generic_call_site(server_args: Any) -> str | None:
+    if bool(getattr(server_args, "use_ray", False)):
+        return "SGLang Ray NUMA fallback is not validated"
+    dp_size = getattr(server_args, "dp_size", 1)
+    if isinstance(dp_size, int) and not isinstance(dp_size, bool) and dp_size > 1:
+        return f"SGLang data-parallel NUMA fallback is not validated (dp_size={dp_size})"
+    if _env_bool("SGLANG_SET_CPU_AFFINITY", default=False):
+        return "SGLANG_SET_CPU_AFFINITY would overwrite the NUMA-derived CPU affinity"
+    return None
 
 
 def _generic_node(gpu_id: int, provider: str) -> int:
@@ -67,7 +106,7 @@ def _check_generic_binding_prerequisites() -> None:
             "generic SGLang NUMA binding requires multiple NUMA nodes",
             code="NUMA_NOT_AVAILABLE",
         )
-    if shutil.which("numactl") is None:
+    if _env_bool("SGLANG_NUMA_BIND_V2") and shutil.which("numactl") is None:
         raise DeviceMappingError(
             "numactl is not available on PATH",
             code="BIND_EXECUTOR_MISSING",
@@ -138,6 +177,17 @@ def _around_numa_query(original: Any, server_args: Any, gpu_id: int, *, mode: Pl
             "unknown SGLang native query classification",
             code="NATIVE_STATUS_INVALID",
         )
+    unsupported = _unsupported_generic_call_site(server_args)
+    if unsupported is not None:
+        error = DeviceMappingError(unsupported, code="CALL_SITE_UNSUPPORTED")
+        if mode is PluginMode.STRICT:
+            raise error
+        logger.warning(
+            "[kunpeng-affinity] SGLang generic NUMA fallback skipped for GPU %s: %s",
+            gpu_id,
+            error,
+        )
+        return None
     try:
         # A complete candidate result also proves that the configured Runtime
         # Provider covers this process. Only then is native None fallback-safe.
@@ -191,11 +241,32 @@ def register() -> None:
             f"provider {config.provider!r} is not registered for SGLang",
             code="PROVIDER_NOT_FOUND",
         )
+    detected_version = _sglang_version()
+    if detected_version not in _SUPPORTED_SGLANG_VERSIONS:
+        message = (
+            f"unsupported SGLang version {detected_version}; validated versions are "
+            f"{sorted(_SUPPORTED_SGLANG_VERSIONS)}"
+        )
+        if mode is PluginMode.STRICT:
+            raise AffinityIntegrationError(
+                message,
+                code="FRAMEWORK_VERSION_UNSUPPORTED",
+            )
+        logger.warning("[kunpeng-affinity] %s; plugin Hook not registered", message)
+        return
+
     from sglang.srt.plugins import HookRegistry
     from sglang.srt.plugins.hook_registry import HookType
+    from sglang.srt.utils import numa_utils
 
-    target = "sglang.srt.utils.numa_utils.get_numa_node_if_available"
     if getattr(register, _HOOK_MARKER, False):
+        return
+    try:
+        _validate_hook_signature(numa_utils.get_numa_node_if_available)
+    except AffinityIntegrationError as exc:
+        if mode is PluginMode.STRICT:
+            raise
+        logger.warning("[kunpeng-affinity] %s; plugin Hook not registered", exc)
         return
 
     def hook(original: Any, server_args: Any, gpu_id: int) -> int | None:
@@ -209,10 +280,12 @@ def register() -> None:
 
     # The hook changes only NUMA-node selection; SGLang keeps process launching
     # and the actual numactl operation in its original implementation.
-    HookRegistry.register(target, hook, HookType.AROUND)
+    HookRegistry.register(_HOOK_TARGET, hook, HookType.AROUND)
     setattr(register, _HOOK_MARKER, True)
     logger.warning(
-        "[kunpeng-affinity] installed SGLang NUMA query hook mode=%s provider=%s",
+        "[kunpeng-affinity] registered SGLang NUMA query hook version=%s mode=%s provider=%s; "
+        "SGLang confirms application with its Applied hook log",
+        detected_version,
         mode.value,
         config.provider,
     )
