@@ -212,7 +212,7 @@ fields = {
     "ttft_p95_ms": ("p99_ttft_ms", 1),
     "tpot_mean_ms": ("mean_tpot_ms", 1),
     "tpot_p50_ms": ("median_tpot_ms", 1),
-    "e2e_mean_s": ("mean_e2e_latency_ms", 0.001),
+    "e2e_mean_s": ("mean_e2el_ms", 0.001),
     "output_throughput_tok_s": ("output_throughput", 1),
 }
 
