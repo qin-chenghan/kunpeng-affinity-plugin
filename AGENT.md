@@ -67,6 +67,55 @@ service-on/bench.log
 request-comparison.txt
 ```
 
+## Task 3: 184 vLLM TP=4 Split Prefill/Decode Measurement
+
+Run this as a separate temporary benchmark after Task 1, or when the dedicated
+184 environment is available. Keep Task 1 and the pending Ascend task
+unchanged. This task uses the same authoritative Qwen3-32B TP=4 service, but
+measures two deliberately separated request shapes:
+
+- Prefill-oriented: random input 2048 tokens, random output 128 tokens;
+- Decode-oriented: random input 128 tokens, random output 2048 tokens.
+
+The `off` and `on` services are started separately. The `off` arm still uses
+the same vLLM `--numa-bind` service option as the existing TP=4 validation, so
+this is a comparison of the plugin's generic path against the corresponding
+baseline service, not a comparison against a process with all NUMA binding
+disabled.
+
+Run only:
+
+```bash
+cd /home/qch/tools/kunpeng-affinity-plugin
+git status --short
+git pull --ff-only
+TEST_ID=vllm_gain_$(date +%Y%m%d_%H%M%S) bash scripts/184-affinity-gain.sh
+```
+
+Do not edit the plugin, framework, model, existing `184timeline.sh`, or this
+temporary helper to make a benchmark pass. If the command fails, preserve the
+result directory and report the first failing stage and its log.
+
+Return a concise Chinese report with the exact commit, command return code,
+absolute result directory, Hook/generic-path evidence, EngineCore and four
+Worker CPU/memory-policy evidence, and separate `off/on` comparisons for both
+Prefill and Decode. Preserve these artifacts:
+
+```text
+run-summary.txt
+environment.txt
+comparison.txt
+service-off/server.log
+service-off/processes.txt
+service-off/bench_prefill.json
+service-off/bench_decode.json
+service-on/server.log
+service-on/affinity.log
+service-on/processes.txt
+service-on/bench_prefill.json
+service-on/bench_decode.json
+```
+
 A nonzero exit caused by `PLUGIN_LOADED_NATIVE_PRESERVED` is a valid blocked
 result, not permission to change the test conditions.
 
