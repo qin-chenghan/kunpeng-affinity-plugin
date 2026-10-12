@@ -87,11 +87,13 @@ start_service() {
     local server_script="$mode_dir/server.sh"
     local pid_file="$mode_dir/server.pid"
     local plugin_env
+    local binding_arg=
 
     mkdir -p "$mode_dir"
     if [[ "$mode" == off ]]; then
         plugin_env='export KUNPENG_AFFINITY_MODE=off'
     else
+        binding_arg=--numa-bind
         mkdir -p "$RUN_DIR/bootstrap"
         cat > "$RUN_DIR/bootstrap/sitecustomize.py" <<'PY'
 from kunpeng_affinity.vllm_plugin import register
@@ -129,6 +131,7 @@ exec python3 -m vllm.entrypoints.openai.api_server \
   --enable_chunked_prefill \
   --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY", "mode":0}' \
   --async-scheduling \
+  $binding_arg \
   --profiler-config '{"profiler":"torch","torch_profiler_dir":"$PROFILE_DIR","delay_iterations":2,"max_iterations":0,"warmup_iterations":1,"active_iterations":5,"ignore_frontend":true}' \
   > '$mode_dir/server.log' 2>&1
 EOF
@@ -284,8 +287,8 @@ if [[ ! -f "$RUN_DIR/service-on/server.log" ]] || \
     exit 1
 fi
 if ! grep -q "source=generic" "$RUN_DIR/service-on/server.log"; then
-    log "BLOCKED: Hook loaded but real service did not reach generic path"
-    log "classification=PLUGIN_LOADED_NATIVE_PRESERVED"
+    log "BLOCKED: Hook loaded but no generic NUMA selection evidence was found; inspect service-on/server.log"
+    log "classification=PLUGIN_LOADED_GENERIC_NOT_OBSERVED"
     exit 1
 fi
 

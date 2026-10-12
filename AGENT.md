@@ -78,9 +78,10 @@ measures only the prefill-oriented request shape:
 
 The `off` and `on` services are started separately. The `off` arm still uses
 the same vLLM model, TP, graph, prefill, and memory settings as the `on` arm,
-but deliberately omits vLLM's native `--numa-bind`. This makes the baseline
-an unbound process and leaves the NUMA decision reachable by the plugin in the
-`on` arm. It is a temporary plugin-gain measurement, not a comparison against
+but deliberately omits `--numa-bind`. The `on` arm adds `--numa-bind` to enable
+the binding lifecycle and sets `KUNPENG_AFFINITY_VLLM_FORCE_GENERIC=1` to select
+the plugin's generic discovery path. Neither arm specifies NUMA nodes manually.
+It is a temporary plugin-gain measurement, not a comparison against
 vLLM's native NUMA implementation.
 
 Both arms must use the same graph configuration: `VLLM_ENFORCE_CUDA_GRAPH=1`,
@@ -118,7 +119,7 @@ service-on/processes.txt
 service-on/bench_prefill.json
 ```
 
-A nonzero exit caused by `PLUGIN_LOADED_NATIVE_PRESERVED` is a valid blocked
+A nonzero exit caused by `PLUGIN_LOADED_GENERIC_NOT_OBSERVED` is a valid blocked
 result, not permission to change the test conditions.
 
 ## Task 2: Pending Ascend Validation - Keep Until Completed
