@@ -102,6 +102,7 @@ PY
 echo \$\$ > '$pid_file'
 export CUDA_VISIBLE_DEVICES='$GPU_LIST'
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ENFORCE_CUDA_GRAPH=1
 $plugin_env
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
 export no_proxy=127.0.0.1,localhost
@@ -112,7 +113,9 @@ exec vllm serve '$MODEL_PATH' \
   --trust-remote-code \
   --max-model-len 4096 \
   --gpu-memory-utilization 0.9 \
-  --numa-bind > '$mode_dir/server.log' 2>&1
+  --enable-chunked-prefill \
+  --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' \
+  > '$mode_dir/server.log' 2>&1
 EOF
     chmod +x "$server_script"
 

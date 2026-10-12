@@ -78,10 +78,15 @@ measures two deliberately separated request shapes:
 - Decode-oriented: random input 128 tokens, random output 2048 tokens.
 
 The `off` and `on` services are started separately. The `off` arm still uses
-the same vLLM `--numa-bind` service option as the existing TP=4 validation, so
-this is a comparison of the plugin's generic path against the corresponding
-baseline service, not a comparison against a process with all NUMA binding
-disabled.
+the same vLLM model, TP, graph, prefill, and memory settings as the `on` arm,
+but deliberately omits vLLM's native `--numa-bind`. This makes the baseline
+an unbound process and leaves the NUMA decision reachable by the plugin in the
+`on` arm. It is a temporary plugin-gain measurement, not a comparison against
+vLLM's native NUMA implementation.
+
+Both arms must use the same graph configuration: `VLLM_ENFORCE_CUDA_GRAPH=1`,
+`--enable-chunked-prefill`, and
+`--compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}'`.
 
 Run only:
 
