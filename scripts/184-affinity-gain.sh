@@ -11,9 +11,11 @@ GPU_LIST=0,1,2,3
 PORT=18080
 REQUESTS=32
 CONCURRENCY=8
+VLLM_RPC_TIMEOUT=1800000
 MODES="${MODES:-off on}"
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_DIR="/home/qch/tools/kunpeng-affinity-results/${TEST_ID}"
+PROFILE_DIR="$RUN_DIR/profile"
 ACTIVE_PID_FILE=
 
 if [[ -e "$RUN_DIR" ]]; then
@@ -21,6 +23,7 @@ if [[ -e "$RUN_DIR" ]]; then
     exit 2
 fi
 mkdir -p "$RUN_DIR"
+mkdir -p "$PROFILE_DIR"
 SUMMARY="$RUN_DIR/run-summary.txt"
 : > "$SUMMARY"
 
@@ -103,18 +106,30 @@ echo \$\$ > '$pid_file'
 export CUDA_VISIBLE_DEVICES='$GPU_LIST'
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENFORCE_CUDA_GRAPH=1
+export VLLM_USE_V1=1
+export VLLM_RPC_TIMEOUT='$VLLM_RPC_TIMEOUT'
 $plugin_env
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
 export no_proxy=127.0.0.1,localhost
-exec vllm serve '$MODEL_PATH' \
+exec python3 -m vllm.entrypoints.openai.api_server \
+  --model '$MODEL_PATH' \
   --served-model-name '$SERVED_MODEL' \
-  --tensor-parallel-size 4 \
-  --host 0.0.0.0 --port '$PORT' \
-  --trust-remote-code \
-  --max-model-len 4096 \
-  --gpu-memory-utilization 0.9 \
-  --enable-chunked-prefill \
-  --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' \
+  --host 127.0.0.1 \
+  --port '$PORT' \
+  --trust_remote_code \
+  --dtype auto \
+  --max_model_len 4096 \
+  --distributed_executor_backend mp \
+  --pipeline_parallel_size 1 \
+  --tensor_parallel_size 4 \
+  --data_parallel_size 1 \
+  --quantization compressed-tensors \
+  --gpu_memory_utilization 0.9 \
+  --kv_cache_dtype auto \
+  --enable_chunked_prefill \
+  --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY", "mode":0}' \
+  --async-scheduling \
+  --profiler-config '{"profiler":"torch","torch_profiler_dir":"$PROFILE_DIR","delay_iterations":2,"max_iterations":0,"warmup_iterations":1,"active_iterations":5,"ignore_frontend":true}' \
   > '$mode_dir/server.log' 2>&1
 EOF
     chmod +x "$server_script"
@@ -145,6 +160,7 @@ run_benchmark() {
       --endpoint /v1/completions --model '$SERVED_MODEL' --tokenizer '$MODEL_PATH' \
       --dataset-name random --random-input-len $input_len --random-output-len $output_len \
       --num-warmups 4 --num-prompts $REQUESTS --max-concurrency $CONCURRENCY \
+      --trust-remote-code --ignore-eos --top-p 1 --top-k -1 --temperature 0 \
       --save-result --save-detailed --result-dir '$mode_dir' \
       --result-filename 'bench_${case_name}.json'" > "$log_file" 2>&1 || return 1
 
@@ -214,6 +230,7 @@ PY
 log "184 affinity-gain check"
 log "prefill=input2048/output128; decode=input128/output2048"
 log "requests=$REQUESTS concurrency=$CONCURRENCY modes='$MODES'"
+log "vllm_rpc_timeout=${VLLM_RPC_TIMEOUT}ms profiler_config=$PROFILE_DIR (benchmark profiling disabled)"
 
 if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
     log "FAIL: container not found: $CONTAINER"
