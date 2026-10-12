@@ -67,15 +67,14 @@ service-on/bench.log
 request-comparison.txt
 ```
 
-## Task 3: 184 vLLM TP=4 Split Prefill/Decode Measurement
+## Task 3: 184 vLLM TP=4 Prefill Measurement
 
 Run this as a separate temporary benchmark after Task 1, or when the dedicated
 184 environment is available. Keep Task 1 and the pending Ascend task
-unchanged. This task uses the same authoritative Qwen3-32B TP=4 service, but
-measures two deliberately separated request shapes:
+unchanged. This task uses the same authoritative Qwen3-32B TP=4 service and
+measures only the prefill-oriented request shape:
 
-- Prefill-oriented: random input 2048 tokens, random output 128 tokens;
-- Decode-oriented: random input 128 tokens, random output 2048 tokens.
+- Random input 2048 tokens, random output 128 tokens.
 
 The `off` and `on` services are started separately. The `off` arm still uses
 the same vLLM model, TP, graph, prefill, and memory settings as the `on` arm,
@@ -86,7 +85,7 @@ vLLM's native NUMA implementation.
 
 Both arms must use the same graph configuration: `VLLM_ENFORCE_CUDA_GRAPH=1`,
 `--enable-chunked-prefill`, and
-`--compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}'`.
+`--compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY", "mode":0}'`.
 
 Run only:
 
@@ -103,8 +102,8 @@ result directory and report the first failing stage and its log.
 
 Return a concise Chinese report with the exact commit, command return code,
 absolute result directory, Hook/generic-path evidence, EngineCore and four
-Worker CPU/memory-policy evidence, and separate `off/on` comparisons for both
-Prefill and Decode. Preserve these artifacts:
+Worker CPU/memory-policy evidence, and the prefill `off/on` comparison.
+Preserve these artifacts:
 
 ```text
 run-summary.txt
@@ -113,18 +112,20 @@ comparison.txt
 service-off/server.log
 service-off/processes.txt
 service-off/bench_prefill.json
-service-off/bench_decode.json
 service-on/server.log
 service-on/affinity.log
 service-on/processes.txt
 service-on/bench_prefill.json
-service-on/bench_decode.json
 ```
 
 A nonzero exit caused by `PLUGIN_LOADED_NATIVE_PRESERVED` is a valid blocked
 result, not permission to change the test conditions.
 
 ## Task 2: Pending Ascend Validation - Keep Until Completed
+
+The 165 prefill helper `scripts/165-affinity-gain.sh` now targets container
+`sglang-serve-new` (expected SGLang 0.5.18). Confirm the actual runtime version
+in the report; earlier measurements from the old container remain separate.
 
 This is a separate target-environment task and is intentionally retained. Do
 not delete or mark it complete based on the 184 Iluvatar result. Do not execute

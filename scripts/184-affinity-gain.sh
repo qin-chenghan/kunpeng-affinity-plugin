@@ -216,7 +216,7 @@ fields = {
     "output_throughput_tok_s": ("output_throughput", 1),
 }
 
-for case_name in ("prefill", "decode"):
+for case_name in ("prefill",):
     off = json.loads((root / "service-off" / f"bench_{case_name}.json").read_text())
     on = json.loads((root / "service-on" / f"bench_{case_name}.json").read_text())
     print(f"===== {case_name.upper()} OFF / ON COMPARISON =====")
@@ -228,7 +228,7 @@ PY
 }
 
 log "184 affinity-gain check"
-log "prefill=input2048/output128; decode=input128/output2048"
+log "prefill=input2048/output128"
 log "requests=$REQUESTS concurrency=$CONCURRENCY modes='$MODES'"
 log "vllm_rpc_timeout=${VLLM_RPC_TIMEOUT}ms profiler_config=$PROFILE_DIR (benchmark profiling disabled)"
 
@@ -264,7 +264,7 @@ for mode in $MODES; do
         exit 2
     fi
     start_service "$mode" || exit 1
-    for case_spec in "prefill 2048 128" "decode 128 2048"; do
+    for case_spec in "prefill 2048 128"; do
         read -r case_name input_len output_len <<< "$case_spec"
         run_benchmark "$mode" "$case_name" "$input_len" "$output_len" || exit 1
         summarize_case "$mode" "$case_name" | tee -a "$SUMMARY"
@@ -290,5 +290,5 @@ if ! grep -q "source=generic" "$RUN_DIR/service-on/server.log"; then
 fi
 
 compare_results | tee "$RUN_DIR/comparison.txt" | tee -a "$SUMMARY"
-log "PASS: real TP=4 split prefill/decode benchmark completed"
+log "PASS: real TP=4 prefill benchmark completed"
 log "result directory: $RUN_DIR"

@@ -5,7 +5,7 @@ set -uo pipefail
 
 : "${TEST_ID:?ERROR: set TEST_ID}"
 
-CONTAINER=sglang-serve
+CONTAINER=sglang-serve-new
 MODEL_PATH=/model/Qwen/Qwen3-32B-W8A8
 SERVED_MODEL=Qwen3-32B-W8A8
 GPU_LIST=0,1,2,3
@@ -22,7 +22,6 @@ CLEANED=0
 
 CASES=(
     "prefill 2048 128"
-    "decode 128 2048"
 )
 
 if [[ -e "$RUN_DIR" ]]; then
@@ -247,7 +246,7 @@ import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
-for case_name in ("prefill", "decode"):
+for case_name in ("prefill",):
     off = json.loads((root / f"{case_name}_off" / "latency.json").read_text())["aggregate"]
     on = json.loads((root / f"{case_name}_on" / "latency.json").read_text())["aggregate"]
 
@@ -270,7 +269,7 @@ PY
 }
 
 log "165 affinity-gain check"
-log "prefill=input2048/output128; decode=input128/output2048"
+log "container=$CONTAINER prefill=input2048/output128"
 log "requests=$REQUESTS concurrency=$CONCURRENCY modes='$MODES'"
 log "radix cache disabled; random seed fixed to 1"
 
@@ -293,8 +292,7 @@ for mode in $MODES; do
     stop_server
 done
 
-if [[ -f "$RESULT_DIR/prefill_off/latency.json" && -f "$RESULT_DIR/prefill_on/latency.json" \
-    && -f "$RESULT_DIR/decode_off/latency.json" && -f "$RESULT_DIR/decode_on/latency.json" ]]; then
+if [[ -f "$RESULT_DIR/prefill_off/latency.json" && -f "$RESULT_DIR/prefill_on/latency.json" ]]; then
     compare_results | tee "$RUN_DIR/comparison.txt"
 fi
 
