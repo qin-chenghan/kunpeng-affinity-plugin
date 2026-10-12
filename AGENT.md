@@ -69,6 +69,31 @@ request-comparison.txt
 
 ## Task 3: 184 vLLM TP=4 Prefill Measurement
 
+### Diagnose the latest missing generic-path evidence first
+
+The 2026-10-12 `prefill1` run confirms `--numa-bind`, strict mode, and forced
+generic in the generated startup command. It logs Hook installation and native
+EngineCore/Worker binding, but no plugin call-entry or selection message.
+This does not yet distinguish Hook bypass from logging suppression; do not
+attribute the measured performance difference to the plugin.
+
+Before another model benchmark, run this temporary import-only diagnostic:
+
+```bash
+cd /home/qch/tools/kunpeng-affinity-plugin
+bash scripts/184-hook-check.sh
+```
+
+Return its complete output; the command prints and saves a unique log under
+`/home/qch/tools/kunpeng-affinity-results/184-hook-check-*.log`.
+It checks framework caller source, Hook identity before/after service-module
+imports, and logger state. Its context-manager probe has binding disabled;
+it does not load a model, start a service, launch a child, or change an existing
+inference process. If all checks are normal, report that result rather than
+rerunning the expensive benchmark or patching framework code speculatively.
+
+### Prefill benchmark
+
 Run this as a separate temporary benchmark after Task 1, or when the dedicated
 184 environment is available. Keep Task 1 and the pending Ascend task
 unchanged. This task uses the same authoritative Qwen3-32B TP=4 service and
