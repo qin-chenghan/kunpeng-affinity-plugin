@@ -44,9 +44,12 @@ stop_service() {
     local pid
     pid="$(container_exec "cat '$pid_file' 2>/dev/null" 2>/dev/null || true)"
     if [[ "$pid" =~ ^[0-9]+$ ]]; then
-        container_exec "kill -TERM '$pid' 2>/dev/null || true" >/dev/null 2>&1 || true
+        # The server owns EngineCore and Worker descendants. Kill the whole
+        # dedicated process group so a previous NUMA-bound worker cannot leak
+        # into the next off/on measurement.
+        container_exec "kill -TERM -- '-$pid' 2>/dev/null || kill -TERM '$pid' 2>/dev/null || true" >/dev/null 2>&1 || true
         sleep 8
-        container_exec "kill -KILL '$pid' 2>/dev/null || true" >/dev/null 2>&1 || true
+        container_exec "kill -KILL -- '-$pid' 2>/dev/null || kill -KILL '$pid' 2>/dev/null || true" >/dev/null 2>&1 || true
     fi
 }
 
@@ -91,7 +94,7 @@ start_service() {
 
     mkdir -p "$mode_dir"
     if [[ "$mode" == off ]]; then
-        plugin_env='export KUNPENG_AFFINITY_MODE=off'
+        plugin_env='export KUNPENG_AFFINITY_MODE=off; unset KUNPENG_AFFINITY_VLLM_FORCE_GENERIC KUNPENG_AFFINITY_PROVIDER KUNPENG_AFFINITY_IXSMI _VLLM_INTERNAL_NUMACTL_ARGS _VLLM_INTERNAL_NUMACTL_PYTHON_EXECUTABLE'
     else
         binding_arg=--numa-bind
         mkdir -p "$RUN_DIR/bootstrap"
@@ -139,7 +142,7 @@ EOF
 
     log "start vLLM TP=4 mode=$mode"
     ACTIVE_PID_FILE="$pid_file"
-    docker exec -d "$CONTAINER" bash "$server_script"
+    docker exec -d "$CONTAINER" setsid bash "$server_script"
     if ! wait_for_service; then
         log "FAIL: mode=$mode service did not become ready"
         tail -n 80 "$mode_dir/server.log" || true
@@ -164,6 +167,7 @@ run_benchmark() {
       --dataset-name random --random-input-len $input_len --random-output-len $output_len \
       --num-warmups 4 --num-prompts $REQUESTS --max-concurrency $CONCURRENCY \
       --trust-remote-code --ignore-eos --top-p 1 --top-k -1 --temperature 0 \
+      --percentile-metrics ttft,tpot,itl,e2el \
       --save-result --save-detailed --result-dir '$mode_dir' \
       --result-filename 'bench_${case_name}.json'" > "$log_file" 2>&1 || return 1
 
@@ -225,11 +229,11 @@ def required_metric(data, key, path):
     return float(data[key])
 
 
-def optional_e2e_metric(data):
+def required_e2e_metric(data, path):
     for key in ("mean_e2el_ms", "mean_e2e_ms", "mean_e2e_latency_ms"):
         if key in data:
             return float(data[key]) * 0.001
-    return None
+    raise SystemExit(f"{path}: E2E metric missing after explicit e2el request")
 
 for case_name in ("prefill",):
     off = json.loads((root / "service-off" / f"bench_{case_name}.json").read_text())
@@ -240,12 +244,9 @@ for case_name in ("prefill",):
         after = required_metric(on, key, "service-on") * scale
         print(f"{label}: off={before:.3f} on={after:.3f} delta={(after / before - 1) * 100:+.2f}%")
 
-    off_e2e = optional_e2e_metric(off)
-    on_e2e = optional_e2e_metric(on)
-    if off_e2e is None or on_e2e is None:
-        print("e2e_mean_s: unavailable (benchmark JSON has no E2E mean field)")
-    else:
-        print(f"e2e_mean_s: off={off_e2e:.3f} on={on_e2e:.3f} delta={(on_e2e / off_e2e - 1) * 100:+.2f}%")
+    off_e2e = required_e2e_metric(off, "service-off")
+    on_e2e = required_e2e_metric(on, "service-on")
+    print(f"e2e_mean_s: off={off_e2e:.3f} on={on_e2e:.3f} delta={(on_e2e / off_e2e - 1) * 100:+.2f}%")
 PY
 }
 
