@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import types
@@ -130,6 +131,29 @@ class VllmPluginTest(unittest.TestCase):
         self.assertEqual(self.calls, [(config, 2, 1, "EngineCore")])
         self.assertIn("process_kind=EngineCore", "\n".join(captured.output))
         self.assertIn("numa_bind=True", "\n".join(captured.output))
+
+    def test_install_keeps_plugin_diagnostics_visible(self) -> None:
+        original_handlers = list(vllm_plugin.logger.handlers)
+        original_level = vllm_plugin.logger.level
+        original_propagate = vllm_plugin.logger.propagate
+        try:
+            vllm_plugin.logger.handlers.clear()
+            vllm_plugin.logger.setLevel(logging.ERROR)
+            vllm_plugin.logger.propagate = True
+
+            with patch.object(vllm_plugin, "_vllm_version", return_value="0.23.0"):
+                vllm_plugin.install()
+
+            self.assertEqual(vllm_plugin.logger.level, logging.WARNING)
+            self.assertFalse(vllm_plugin.logger.propagate)
+            self.assertTrue(
+                any(getattr(handler, "__kunpeng_affinity_handler__", False) for handler in vllm_plugin.logger.handlers)
+            )
+        finally:
+            vllm_plugin.logger.handlers.clear()
+            vllm_plugin.logger.handlers.extend(original_handlers)
+            vllm_plugin.logger.setLevel(original_level)
+            vllm_plugin.logger.propagate = original_propagate
 
     def test_generic_resolution_carries_snapshot_to_transaction(self) -> None:
         snapshot_json = '{"snapshot":"complete"}'

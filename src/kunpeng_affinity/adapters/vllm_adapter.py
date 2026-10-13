@@ -44,6 +44,21 @@ _AUXILIARY_DEMO_VERSION = "0.26.0"
 _FORCE_GENERIC_ENV = "KUNPENG_AFFINITY_VLLM_FORCE_GENERIC"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _SUPPORTED_BASE_VERSIONS = frozenset({_TARGET_VERSION, _COMPATIBILITY_VERSION, _AUXILIARY_DEMO_VERSION})
+_PLUGIN_HANDLER_MARKER = "__kunpeng_affinity_handler__"
+
+
+def _ensure_plugin_logging() -> None:
+    """Keep plugin diagnostics visible after the framework configures logging."""
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+    if any(getattr(handler, _PLUGIN_HANDLER_MARKER, False) for handler in logger.handlers):
+        return
+
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.WARNING)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    setattr(handler, _PLUGIN_HANDLER_MARKER, True)
+    logger.addHandler(handler)
 
 
 def _vllm_version() -> str:
@@ -96,6 +111,7 @@ def install(*, mode: PluginMode | None = None) -> None:
     if mode is PluginMode.OFF:
         return
 
+    _ensure_plugin_logging()
     config = load_plugin_config()
     from vllm.utils import numa_utils
 

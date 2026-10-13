@@ -72,25 +72,27 @@ request-comparison.txt
 ### Diagnose the latest missing generic-path evidence first
 
 The 2026-10-12 `prefill1` run confirms `--numa-bind`, strict mode, and forced
-generic in the generated startup command. It logs Hook installation and native
-EngineCore/Worker binding, but no plugin call-entry or selection message.
-This does not yet distinguish Hook bypass from logging suppression; do not
-attribute the measured performance difference to the plugin.
+generic in the generated startup command. It logged Hook installation and
+native EngineCore/Worker binding, but no plugin call-entry or selection
+message. The import-only check showed that both vLLM callers reference the
+patched `numa_utils` module; the missing evidence was caused by vLLM/CoreX
+raising the root logger threshold to `ERROR`. The plugin now installs its own
+WARNING-level diagnostic handler during vLLM Hook installation.
 
-Before another model benchmark, run this temporary import-only diagnostic:
+After pulling the logging fix, run the complete benchmark directly:
 
 ```bash
 cd /home/qch/tools/kunpeng-affinity-plugin
-bash scripts/184-hook-check.sh
+git pull --ff-only
+TEST_ID=vllm_gain_$(date +%Y%m%d_%H%M%S) bash scripts/184-affinity-gain.sh
 ```
 
-Return its complete output; the command prints and saves a unique log under
-`/home/qch/tools/kunpeng-affinity-results/184-hook-check-*.log`.
-It checks framework caller source, Hook identity before/after service-module
-imports, and logger state. Its context-manager probe has binding disabled;
-it does not load a model, start a service, launch a child, or change an existing
-inference process. If all checks are normal, report that result rather than
-rerunning the expensive benchmark or patching framework code speculatively.
+The expected on-service log must now contain the plugin call-entry and
+`source=generic` messages, in addition to the EngineCore and Worker binding
+messages. Return the complete report and preserve the result directory. The
+temporary `184-hook-check.sh` remains available as an import-only diagnostic if
+the complete run still lacks plugin evidence; it does not load a model, start a
+service, launch a child, or change an existing inference process.
 
 ### Prefill benchmark
 
