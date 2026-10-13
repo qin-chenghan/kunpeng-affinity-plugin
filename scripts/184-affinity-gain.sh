@@ -195,7 +195,7 @@ def get(*keys):
 print(
     f"{case_name}_{mode}: "
     f"ttft_p50={get('median_ttft_ms'):.2f}ms "
-    f"ttft_p95={get('p99_ttft_ms'):.2f}ms "
+    f"ttft_p99={get('p99_ttft_ms'):.2f}ms "
     f"tpot_p50={get('median_tpot_ms'):.2f}ms "
     f"throughput={get('output_throughput'):.2f}tok/s"
 )
@@ -212,21 +212,40 @@ root = pathlib.Path(sys.argv[1])
 fields = {
     "ttft_mean_ms": ("mean_ttft_ms", 1),
     "ttft_p50_ms": ("median_ttft_ms", 1),
-    "ttft_p95_ms": ("p99_ttft_ms", 1),
+    "ttft_p99_ms": ("p99_ttft_ms", 1),
     "tpot_mean_ms": ("mean_tpot_ms", 1),
     "tpot_p50_ms": ("median_tpot_ms", 1),
-    "e2e_mean_s": ("mean_e2el_ms", 0.001),
     "output_throughput_tok_s": ("output_throughput", 1),
 }
+
+
+def required_metric(data, key, path):
+    if key not in data:
+        raise SystemExit(f"{path}: missing required benchmark field {key!r}")
+    return float(data[key])
+
+
+def optional_e2e_metric(data):
+    for key in ("mean_e2el_ms", "mean_e2e_ms", "mean_e2e_latency_ms"):
+        if key in data:
+            return float(data[key]) * 0.001
+    return None
 
 for case_name in ("prefill",):
     off = json.loads((root / "service-off" / f"bench_{case_name}.json").read_text())
     on = json.loads((root / "service-on" / f"bench_{case_name}.json").read_text())
     print(f"===== {case_name.upper()} OFF / ON COMPARISON =====")
     for label, (key, scale) in fields.items():
-        before = float(off[key]) * scale
-        after = float(on[key]) * scale
+        before = required_metric(off, key, "service-off") * scale
+        after = required_metric(on, key, "service-on") * scale
         print(f"{label}: off={before:.3f} on={after:.3f} delta={(after / before - 1) * 100:+.2f}%")
+
+    off_e2e = optional_e2e_metric(off)
+    on_e2e = optional_e2e_metric(on)
+    if off_e2e is None or on_e2e is None:
+        print("e2e_mean_s: unavailable (benchmark JSON has no E2E mean field)")
+    else:
+        print(f"e2e_mean_s: off={off_e2e:.3f} on={on_e2e:.3f} delta={(on_e2e / off_e2e - 1) * 100:+.2f}%")
 PY
 }
 
@@ -270,7 +289,10 @@ for mode in $MODES; do
     for case_spec in "prefill 2048 128"; do
         read -r case_name input_len output_len <<< "$case_spec"
         run_benchmark "$mode" "$case_name" "$input_len" "$output_len" || exit 1
-        summarize_case "$mode" "$case_name" | tee -a "$SUMMARY"
+        if ! summarize_case "$mode" "$case_name" | tee -a "$SUMMARY"; then
+            log "FAIL: benchmark result summary failed for mode=$mode case=$case_name"
+            exit 1
+        fi
     done
     capture_processes > "$RUN_DIR/service-$mode/processes.txt" 2>&1
     if [[ "$mode" == on ]]; then
@@ -292,6 +314,9 @@ if ! grep -q "source=generic" "$RUN_DIR/service-on/server.log"; then
     exit 1
 fi
 
-compare_results | tee "$RUN_DIR/comparison.txt" | tee -a "$SUMMARY"
+if ! compare_results | tee "$RUN_DIR/comparison.txt" | tee -a "$SUMMARY"; then
+    log "FAIL: benchmark result comparison failed; PASS not emitted"
+    exit 1
+fi
 log "PASS: real TP=4 prefill benchmark completed"
 log "result directory: $RUN_DIR"
