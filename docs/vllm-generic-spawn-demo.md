@@ -37,6 +37,15 @@ Explicit nodes and a disabled vLLM NUMA binding switch are always preserved.
 Discovery failure raises before the original binding executor is entered. The
 diagnostic never guesses a BDF or commits a partial device list.
 
+`FORCE_GENERIC` is a verification override, not a binding-enable switch or a
+Provider selector. Leave it unset for normal deployment; isolated real-model
+tests may use it when generic discovery is the behavior being verified.
+On the forced discovery path, a failure raises even in plugin `auto` mode.
+Plugin `off` disables the override but does not disable vLLM's own binding.
+See the [parameter interactions](../README.md#vllm-plugin-behavior) and
+[deployment prerequisites](../README.md#runtime-dependencies-and-environment-checks)
+before running the diagnostic.
+
 ## Running
 
 First install the checkout into the Python environment that contains vLLM:

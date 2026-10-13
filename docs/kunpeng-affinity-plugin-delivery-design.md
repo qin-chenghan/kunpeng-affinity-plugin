@@ -181,6 +181,8 @@ diagnostics 读取各层结果，但各核心层不反向依赖 diagnostics
 
 源码 editable install 或 wheel 安装后继续使用原框架命令。对于 vLLM，用户仍需按框架语义启用 `--numa-bind`；安装插件本身不自动改变绑定开关。纯拓扑测试和真实主机只读探测可以直接通过 `PYTHONPATH` 运行，不要求安装插件；只有验证框架自动发现 entry point 时才必须安装。
 
+部署依赖、按 Provider 区分的环境要求、容器内检查命令及 `FORCE_GENERIC` 的参数交互统一维护在 [README](../README.md#runtime-dependencies-and-environment-checks)。必须在实际服务容器中，以服务使用的解释器、用户和资源约束检查；宿主机安装工具、源码单测通过或 entry point 存在都不能证明服务进程可以执行绑定。
+
 ### 4.2 建议目录
 
 ```text
@@ -600,6 +602,8 @@ target_cpus = node_cpus ∩ online_cpus ∩ allowed_cpus
 | 插件 Provider 不支持 | 无法构造可信 BDF | 否，进入插件失败策略 |
 
 Eligibility Checker 复现目标 vLLM 版本中与设备厂商无关的保护条件，但不复制“必须是 CUDA-like”这一原生 Provider 能力限制。这样既不绕过系统保护，也能覆盖框架尚未支持的 GPU。
+
+部署时需同时满足三类依赖：插件和框架的 Python 环境及加载入口；Provider 的设备身份接口和可读 PCI/NUMA sysfs；框架执行绑定所需的 libnuma、执行工具及资源/系统调用权限。vLLM 和 SGLang V2 需要 `numactl`，SGLang V1 不需要该命令但仍依赖 libnuma 和内存策略能力。动态库加载成功或内存策略查询成功不等于后续子进程绑定成功；容器 cpuset、seccomp 和执行器文件权限需要独立验证。
 
 ### 11.3 原生结果校验
 

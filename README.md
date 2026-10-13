@@ -108,16 +108,28 @@ For isolated integration testing, setting
 `numa_bind_nodes` list to be resolved as follows:
 
 ```text
-vLLM logical device -> vLLM platform PCI BDF -> Linux sysfs -> NUMA node
+vLLM logical device -> selected Provider PCI BDF -> Linux sysfs -> NUMA node
 ```
 
 The diagnostic override still requires vLLM's `numa_bind=True`, preserves explicit
 `numa_bind_nodes`, and reuses vLLM's original `configure_subprocess` and
 `numactl` execution. It deliberately bypasses only vLLM's native GPU NUMA
-query. The switch is disabled by default and fails strictly because it is a
-verification aid, not a production policy control.
-`KUNPENG_AFFINITY_MODE=off` remains authoritative and disables this diagnostic
-override as well.
+query. Leave the switch unset for normal deployment. It is suitable for isolated
+diagnostics or a real-model benchmark that must prove the generic path was used.
+A discovery failure on this forced path raises even when the plugin mode is
+`auto`; silently proceeding without binding would invalidate that verification.
+
+| Condition with `FORCE_GENERIC=1` | Behavior |
+|---|---|
+| `KUNPENG_AFFINITY_MODE=off` | No Hook is installed; the override has no effect. Framework binding settings remain independent. |
+| vLLM `numa_bind=False` | Preserve the disabled binding switch; no forced discovery. |
+| Explicit `numa_bind_nodes` | Preserve the nodes; the override does not replace them. |
+| Binding enabled, nodes missing | Bypass native NUMA discovery and resolve through the selected Provider and Linux topology. Discovery failure raises. |
+
+This switch neither enables `--numa-bind` nor selects a Provider. It also does
+not make every installation failure strict: version/signature checks still
+follow `KUNPENG_AFFINITY_MODE`. To compare binding against no binding, disable
+the framework's own binding in the baseline; plugin `off` alone is insufficient.
 
 The supported vLLM base versions are 0.23.0, 0.25.1, and 0.26.0. Vendor-local
 builds such as `0.25.1+ascend.8.0` are accepted when their upstream base
@@ -178,7 +190,7 @@ propagate. Confirm both this plugin's `registered` message and SGLang's
 After source installation, SGLang can restrict discovery to this plugin with:
 
 ```bash
-SGLANG_PLUGINS=kunpeng_affinity sglang serve <model-path>
+SGLANG_PLUGINS=kunpeng_affinity sglang serve /path/to/model
 ```
 
 The source-level entry point and fake-runtime tests prove packaging and hook
@@ -214,6 +226,138 @@ read-only source, topology and Runtime Provider checks. Setting
 entry-point verification and the two vLLM dummy-spawn binding checks. Every
 stage has its own log and the suite stops at the first failed gate. See
 `validation/iluvatar/README.md` for the stage order and safety boundary.
+
+## Runtime dependencies and environment checks
+
+Check these requirements **inside the actual service container**, using the
+same Python interpreter, user, visibility variables, and resource limits as
+the service. Host-installed packages do not supply missing container packages.
+Installing this plugin does not install a framework, accelerator Runtime, or
+system NUMA tools.
+
+### Common requirements
+
+| Requirement | Scope and purpose |
+|---|---|
+| Linux with multiple NUMA nodes | The generic automatic-binding precheck requires at least two nodes. A single-node system is skipped rather than treated as an optimization opportunity. |
+| Python 3.10+ and `packaging>=21` | Plugin requirements; the selected framework may require a newer Python. |
+| Compatible vLLM or SGLang installation | Use the supported versions listed above and the matching vendor extensions. Only the framework being used is required; version acceptance does not certify every hardware/launch path. |
+| Installed plugin metadata and active framework loader | Install into the service interpreter. Plugin filters must permit `kunpeng_affinity`, and the loader must run before the relevant subprocess launch. An entry point on disk alone does not prove the Hook was called. |
+| Usable `libnuma.so` or `libnuma.so.1` | Required by the framework NUMA probe, including SGLang V2. The library must load, report NUMA available, and allow the framework's memory-policy query. |
+| `numactl` on `PATH` | Required by vLLM and SGLang V2. SGLang V1 uses in-process libnuma without the command; its execution/policy semantics differ from V2. |
+| Readable Linux sysfs topology | `/sys/bus/pci/devices` links must resolve to the real parent hierarchy under `/sys/devices`. NUMA evidence (`numa_node` or usable `local_cpulist`), node CPU lists under `/sys/devices/system/node`, and `/sys/devices/system/cpu/online` must be visible. |
+| Allowed CPUs, memory nodes, and syscalls | Target CPUs must intersect the process's allowed online CPUs. Target memory nodes must be allowed, and policy queries and actual CPU/memory binding must be permitted. Container seccomp and cpuset limits can block these even when tools are installed. |
+| Working framework subprocess executor | The wrapper and service Python must be executable, with `/bin/sh` available. vLLM requires `VLLM_WORKER_MULTIPROC_METHOD=spawn`; SGLang's V2 path also uses spawn and executable temporary scripts in writable `/tmp`. A `noexec` mount can prevent launch. |
+
+Existing affinity may cause the framework to protect an external binding and
+skip automatic adjustment. Do not expand a container's CPU/memory limits merely
+to satisfy a probe. Resolve a permission failure through the deployment's
+specific syscall/resource policy; root access or a privileged container is not
+a universal requirement or remedy.
+
+### Provider-specific requirements
+
+| Path | Additional requirements |
+|---|---|
+| Framework PCI-BDF interface | Runtime device count/identity and a BDF mapping covering every visible logical device. A partial mapping is insufficient. |
+| Iluvatar Runtime Provider | Logical-device UUIDs from the framework/Torch Runtime, plus executable `ixsmi` and its driver/Runtime shared libraries. Its read-only query must return `index,uuid,pci.bus_id`. Use `KUNPENG_AFFINITY_IXSMI` if the command needs an alternate executable path. Physical listing order is never a logical-device mapping. |
+| Ascend sysfs Provider | Explicit ordered `ASCEND_RT_VISIBLE_DEVICES`, and readable driver-exported `/sys/bus/pci/devices/*/devdrv_sysfs_bdf_to_devid` tables covering those physical IDs. Enumeration order cannot replace the visibility list. The Provider itself does not import `torch_npu`, DCMI, or invoke `npu-smi`. |
+| SGLang generic resolver | Importable Torch, including on Ascend. The Ascend path bypasses CUDA device enumeration, but the current resolver still imports Torch. |
+
+The accelerator driver, device access, vendor Runtime (for example CoreX or
+CANN), and framework extensions must already support model serving in the
+container. They are framework/platform prerequisites, not dependencies that
+this plugin installs. `pynvml`, `nvidia-smi`, `npu-smi`, `lspci`, and `lscpu`
+are not universal plugin requirements; optional diagnostics may use them.
+The standalone sysfs topology CLI does not need a model-serving framework,
+libnuma, or numactl because it only reads topology and recommends affinity.
+
+### Install missing packages
+
+On Debian/Ubuntu, install the runtime packages inside the service container:
+
+```bash
+apt-get update
+apt-get install -y numactl libnuma1
+```
+
+On openEuler/RHEL-compatible images:
+
+```bash
+dnf install -y numactl numactl-libs
+```
+
+Prebuilt runtime use does not require `libnuma-dev` or `numactl-devel`. Source
+installation additionally needs pip and setuptools 64+ in the selected Python:
+
+```bash
+python3 -m pip install 'packaging>=21' 'setuptools>=64'
+```
+
+Git is needed to clone the repository and Bash to run its shell helpers.
+Ruff, pre-commit, ShellCheck, and wheel-building tools are development/release
+tools, not service runtime dependencies. The source installer uses
+`--no-deps --no-build-isolation`, so it will not fill in missing Python dependencies.
+
+### Check a new container
+
+Replace `python3` below if the service uses another interpreter. These commands
+inspect the current process and do not launch or change an inference service.
+
+```bash
+python3 -m pip check
+command -v numactl
+numactl --hardware
+numactl --show
+```
+
+For SGLang V1, the `numactl` checks are optional. Use the following check for
+either execution mode; set `FRAMEWORK=sglang` for SGLang:
+
+```bash
+FRAMEWORK=vllm python3 - <<'PY'
+import os
+import sys
+from importlib import import_module
+from importlib.metadata import entry_points, version
+
+framework = os.environ['FRAMEWORK']
+group = 'vllm.general_plugins' if framework == 'vllm' else 'sglang.srt.plugins'
+module = 'vllm.utils.numa_utils' if framework == 'vllm' else 'sglang.srt.utils.numa_utils'
+print('python:', sys.executable)
+for package in ('kunpeng-affinity-plugin', 'packaging', framework):
+    print(package, version(package))
+print('entry_points:', [ep.value for ep in entry_points(group=group) if ep.name == 'kunpeng_affinity'])
+print('allowed_cpus:', sorted(os.sched_getaffinity(0)))
+print('memory_policy_query_available:', import_module(module)._can_set_mempolicy())
+PY
+```
+
+The entry-point list must contain this plugin's registration function. A
+missing distribution or an empty list indicates installation in the wrong
+environment or missing package metadata; correct that before service testing.
+
+`memory_policy_query_available=False` can mean a missing library, unavailable
+NUMA, or a blocked syscall. `True` proves only the framework's query succeeded
+in this process; it does not prove a later EngineCore/Worker can apply binding.
+Likewise, `numactl --show` warnings must be inspected rather than relying solely
+on its exit status. `Mems_allowed_list` describes permitted nodes, not the
+process's applied memory policy.
+
+If desired, choose a target node allowed for both CPUs and memory, then test
+the executor on a disposable child (replace `<node>` with that node):
+
+```text
+numactl --cpunodebind=<node> --membind=<node> /bin/true
+```
+
+This last check changes only the child's affinity/policy. It is not a read-only
+probe and does not modify a running inference process. Complete validation
+still requires Hook-call logs and actual child CPU affinity/memory policy.
+Common prerequisite failures are `NUMA_NOT_AVAILABLE`,
+`MEMPOLICY_UNAVAILABLE`, and `BIND_EXECUTOR_MISSING`; Provider/topology failures
+may instead be summarized as a failed batch. `auto` can skip plugin discovery
+failures, but it does not suppress errors from the original binding executor.
 
 ## Source deployment
 
