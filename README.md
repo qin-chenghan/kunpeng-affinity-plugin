@@ -1,5 +1,10 @@
 # Kunpeng Affinity Plugin
 
+## User guides
+
+- [中文使用指南](docs/user-guide-zh.md)
+- [English User Guide](docs/user-guide-en.md)
+
 This repository contains the incremental implementation of the Kunpeng GPU
 affinity plugin. It includes the vLLM decision hook, the framework-independent
 Linux topology core, provider/batch resolution, and isolated vLLM spawn
