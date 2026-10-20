@@ -241,3 +241,109 @@ Return a separate report containing:
 8. confirmed and unverified boundaries.
 
 Do not merge the Ascend report into the 184 Qwen3-32B TP=4 authority report.
+
+## Task 4: Read-only Environment Inventory for 184 and 165
+
+Collect only the missing environment facts needed by
+`docs/test-environment-matrix.md` for hosts 184 and 165. This is an inventory
+task, not a plugin or framework test.
+
+Do not modify plugin, framework, container, driver, Runtime, sysfs, or service
+configuration. Do not start or stop a service, load a model, run a benchmark,
+change device visibility, or inject a Hook into a running process. Do not pull
+or change the repository checkout. Do not dump complete process environments;
+filter only named plugin/framework variables when needed. Redact credentials,
+tokens, and unrelated business configuration from the report.
+
+The report must be a new Markdown artifact outside the source tree, for example:
+
+```text
+/home/qch/tools/kunpeng-affinity-results/environment-inventory-184-165-<timestamp>.md
+```
+
+The report must contain the exact collection timestamp, host/container, commit
+if the repository was inspected, commands, return codes, concise raw evidence,
+normalized tables, and an explicit `unknown/not collected` value for every
+missing field. Do not infer physical-card count from logical-device count.
+
+### 184 collection
+
+Host facts are already known, but collect the missing device-level evidence for:
+
+```text
+0000:45:00.0
+0000:48:00.0
+0000:af:00.0
+0000:b2:00.0
+```
+
+For every BDF, collect read-only:
+
+```bash
+lspci -D -nnk -s <BDF>
+lspci -D -vv -s <BDF> | grep -E 'LnkCap|LnkSta|Physical Slot|NUMA|Kernel driver'
+cat /sys/bus/pci/devices/<BDF>/numa_node
+readlink -f /sys/bus/pci/devices/<BDF>
+```
+
+Also collect:
+
+```bash
+lspci -tv
+ixsmi -L
+ixsmi --query-gpu=index,uuid,pci.bus_id,minor_number,name --format=csv,noheader,nounits
+command -v ixsmi
+ixsmi --version 2>&1 || true
+ls -l /dev/iluvatar* 2>/dev/null || true
+```
+
+In the actual CoreX/vLLM container, collect package versions for Python,
+PyTorch, vLLM, SGLang if installed, and `kunpeng-affinity`, plus the exact
+CoreX/driver version if a read-only Runtime query exposes it. A missing tool or
+version is a reportable unknown, not a reason to install anything.
+
+### 165 collection
+
+For the eight known Ascend BDFs:
+
+```text
+0000:01:00.0  0000:02:00.0
+0000:41:00.0  0000:42:00.0
+0000:81:00.0  0000:82:00.0
+0000:c1:00.0  0000:c2:00.0
+```
+
+For every BDF, collect the same `lspci -D -nnk`, selected `lspci -vv`,
+`numa_node`, and resolved sysfs path fields. Also collect:
+
+```bash
+lspci -tv
+printf 'ASCEND_RT_VISIBLE_DEVICES=%s\n' "${ASCEND_RT_VISIBLE_DEVICES-<unset>}"
+find /sys -name devdrv_sysfs_bdf_to_devid -print -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \;
+command -v npu-smi && npu-smi info || true
+command -v dcmi-smi && dcmi-smi info || true
+ls -l /dev/davinci* 2>/dev/null || true
+```
+
+In the actual Ascend/SGLang container, collect Python, PyTorch, torch-npu if
+present, vLLM, SGLang, and `kunpeng-affinity` versions. Record the actual
+container name and whether it is the `sglang-serve-new` / SGLang 0.5.18 target;
+do not infer the version from the container name. Record CANN/driver versions
+only from a command or readable version file, and identify the evidence source.
+
+### Report requirements
+
+The normalized report must include:
+
+1. one host/software table for 184 and one for 165;
+2. one device table per host with logical/physical identity as actually
+   observable, UUID where available, BDF, driver, NUMA node, and link state;
+3. the PCIe topology classification supported by `lspci -tv` and sysfs;
+4. the exact fields still missing after collection;
+5. a separation between static environment facts and transient runtime state;
+6. no claim about plugin binding, performance, model accuracy, or service
+   compatibility, because this task does not run those validations.
+
+Return the absolute Markdown path and a concise Chinese summary. Preserve the
+raw command outputs alongside the report when practical, but do not include
+secrets or full unfiltered environment dumps.
